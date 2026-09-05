@@ -437,12 +437,115 @@ class NavBar(BoxLayout):
 
 # ── Screens ──────────────────────────────────────────────────
 
+class LoadingScreen(Screen):
+    """Startup splash: logo + Loading ... / Activity and Signatures."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(20))
+        root.add_widget(Label())  # flex top
+
+        block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(14))
+        block.bind(minimum_height=block.setter("height"))
+        logo_row = BoxLayout(size_hint_y=None, height=dp(128))
+        logo_row.add_widget(Label())
+        logo = Image(
+            source=_logo_path(),
+            size_hint=(None, None),
+            size=(dp(128), dp(128)),
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        logo_row.add_widget(logo)
+        logo_row.add_widget(Label())
+        block.add_widget(logo_row)
+
+        for text, sz, col, h in (
+            ("Loading ...", dp(18), TEXT, dp(30)),
+            ("Activity and Signatures", dp(15), TEXT_SEC, dp(28)),
+        ):
+            lbl = Label(
+                text=text, color=col, bold=True, font_size=sz,
+                size_hint_y=None, height=h, halign="center",
+            )
+            lbl.bind(size=lambda *a, w=lbl: setattr(w, "text_size", w.size))
+            block.add_widget(lbl)
+
+        root.add_widget(block)
+        root.add_widget(Label())  # flex bottom
+        self.add_widget(root)
+
+    def on_enter(self, *a):
+        Clock.schedule_once(self._go_next, 1.2)
+
+    def _go_next(self, *_):
+        app = App.get_running_app()
+        if ws.wallet_exists(app.user_data_dir):
+            self.manager.current = "unlock"
+        else:
+            self.manager.current = "welcome"
+
+
 class WelcomeScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(14))
-        root.add_widget(HeaderBar(title="SOS 69069"))
-        root.add_widget(SubLabel(text="Ethereum Mainnet", color=TEXT_MUTED))
+        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root.add_widget(Label(size_hint_y=0.15))  # top spacer
+
+        # Centered logo block
+        center = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(12))
+        center.bind(minimum_height=center.setter("height"))
+        logo = Image(
+            source=_logo_path(),
+            size_hint=(None, None),
+            size=(dp(120), dp(120)),
+            allow_stretch=True,
+            keep_ratio=True,
+            pos_hint={"center_x": 0.5},
+        )
+        # wrap logo to center horizontally
+        logo_row = BoxLayout(size_hint_y=None, height=dp(120))
+        logo_row.add_widget(Label())  # left flex
+        logo_row.add_widget(logo)
+        logo_row.add_widget(Label())  # right flex
+        center.add_widget(logo_row)
+
+        title = Label(
+            text="SOS 69069",
+            color=TEXT,
+            bold=True,
+            font_size=dp(24),
+            size_hint_y=None,
+            height=dp(32),
+            halign="center",
+        )
+        title.bind(size=lambda *a: setattr(title, "text_size", title.size))
+        center.add_widget(title)
+
+        sub = Label(
+            text="Activity and Signatures",
+            color=TEXT_SEC,
+            font_size=dp(15),
+            size_hint_y=None,
+            height=dp(26),
+            halign="center",
+        )
+        sub.bind(size=lambda *a: setattr(sub, "text_size", sub.size))
+        center.add_widget(sub)
+
+        tag = Label(
+            text="Whatever you do. SOS records.\nWhatever you do. Continue ...",
+            color=TEXT_MUTED,
+            font_size=dp(13),
+            size_hint_y=None,
+            height=dp(44),
+            halign="center",
+        )
+        tag.bind(size=lambda *a: setattr(tag, "text_size", tag.size))
+        center.add_widget(tag)
+
+        root.add_widget(center)
+        root.add_widget(Label(size_hint_y=0.08))
+
         card = Card()
         card.add_widget(SubLabel(text="No wallet found on this device.", color=TEXT_SEC))
         create_btn = BrandButton(text="CREATE NEW WALLET", bg_color=GREEN)
@@ -453,8 +556,8 @@ class WelcomeScreen(Screen):
         card.add_widget(import_btn)
         root.add_widget(card)
         root.add_widget(Label())
-        root.add_widget(SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED))
         self.add_widget(root)
+
 
 
 class CreateWalletScreen(Screen):
@@ -2055,6 +2158,7 @@ class SOSApp(App):
 
         os.makedirs(self.user_data_dir, exist_ok=True)
         sm = ScreenManager()
+        sm.add_widget(LoadingScreen(name="loading"))
         sm.add_widget(WelcomeScreen(name="welcome"))
         sm.add_widget(CreateWalletScreen(name="create"))
         sm.add_widget(ImportWalletScreen(name="import"))
@@ -2068,10 +2172,7 @@ class SOSApp(App):
         sm.add_widget(GasScreen(name="gas"))
         sm.add_widget(SignSubmitScreen(name="ss"))
         sm.add_widget(WalletScreen(name="wallet"))
-        if ws.wallet_exists(self.user_data_dir):
-            sm.current = "unlock"
-        else:
-            sm.current = "welcome"
+        sm.current = "loading"
         self.sm = sm
         return sm
 
