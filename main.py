@@ -186,8 +186,9 @@ class NavBar(BoxLayout):
         items = [
             ("check", "CHECK", BLUE_SOFT),
             ("messages", "MSGS", GREEN_BR),
+            ("presence", "PRES", YELLOW),
             ("sign", "SIGN", ORANGE),
-            ("batch", "BATCH", YELLOW),
+            ("batch", "BATCH", TEXT_MUTED),
             ("wallet", "KEY", TEXT_MUTED),
         ]
         for name, label, color in items:
@@ -201,6 +202,9 @@ class NavBar(BoxLayout):
 
     def _go(self, name):
         app = App.get_running_app()
+        if name in ("sign", "batch", "presence") and not app.private_key and name != "presence":
+            # presence can be viewed locked; actions require unlock
+            pass
         if name in ("sign", "batch") and not app.private_key:
             app.sm.current = "unlock"
         elif name == "wallet":
@@ -718,7 +722,8 @@ class SignScreen(Screen):
             f"Metadata: {meta}\n"
             f"Gas limit: {txr['gasLimit']}"
         )
-        show_popup("Sent", f"Transaction submitted.\n\n{txh[:22]}…")
+        show_popup("Sent", f"Transaction submitted.
+\n{txh[:22]}…")
 
 
 class BatchScreen(Screen):
@@ -860,6 +865,265 @@ class BatchScreen(Screen):
         App.get_running_app().last_batch_results = results
 
 
+
+class PresenceScreen(Screen):
+    """Create and manage presence offers (O/A/D/X protocol)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
+        root.add_widget(TitleLabel(text="Presence"))
+
+        # Create offer card
+        create = Card()
+        create.add_widget(SubLabel(text="Create offer", color=TEXT_SEC))
+        self.offer_type = BrandInput(hint_text="Type: T (trust) or P (push)")
+        self.offer_type.text = "T"
+        create.add_widget(self.offer_type)
+        self.offer_qty = BrandInput(hint_text="Quantity (default 1)")
+        self.offer_qty.text = "1"
+        create.add_widget(self.offer_qty)
+        self.offer_ret = BrandInput(hint_text="Return / exchange (optional)")
+        create.add_widget(self.offer_ret)
+        self.meta_preview = SubLabel(text="", color=TEXT_MUTED)
+        create.add_widget(self.meta_preview)
+        self.offer_type.bind(text=self._preview)
+        self.offer_qty.bind(text=self._preview)
+        self.offer_ret.bind(text=self._preview)
+        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        cbtn = BrandButton(text="CREATE & SEND", bg_color=GREEN)
+        cbtn.bind(on_release=self.create_offer)
+        row.add_widget(cbtn)
+        create.add_widget(row)
+        root.add_widget(create)
+
+        # Filters + load
+        filt = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(4))
+        self.filter = "ALL"
+        for name in ("ALL", "OPEN", "T", "P", "DONE"):
+            b = Button(text=name, background_normal="", font_size=dp(11), bold=True,
+                       background_color=BLUE if name == "ALL" else INPUT_BG, color=TEXT)
+            b.bind(on_release=lambda btn, n=name: self.set_filter(n))
+            filt.add_widget(b)
+        self.filter_btns = filt
+        root.add_widget(filt)
+
+        load_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
+        load_btn = BrandButton(text="LOAD OFFERS", bg_color=BLUE)
+        load_btn.bind(on_release=self.load_offers)
+        load_row.add_widget(load_btn)
+        root.add_widget(load_row)
+
+        self.status = SubLabel(text="Tap LOAD OFFERS", color=TEXT_MUTED)
+        root.add_widget(self.status)
+
+        self.scroll = ScrollView(size_hint=(1, 1))
+        self.list_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6))
+        self.list_box.bind(minimum_height=self.list_box.setter("height"))
+        self.scroll.add_widget(self.list_box)
+        root.add_widget(self.scroll)
+
+        root.add_widget(NavBar(current="presence"))
+        self.add_widget(root)
+        self.offers = []
+        self._preview()
+
+    def _preview(self, *a):
+        try:
+            import presence as pres
+            typ = self.offer_type.text.strip().upper() or "T"
+            qty = int(self.offer_qty.text.strip() or "1")
+            ret = self.offer_ret.text.strip()
+            meta = pres.build_offer_metadata(typ, qty, ret)
+            self.meta_preview.text = meta[:60] + ("…" if len(meta) > 60 else "")
+        except Exception:
+            self.meta_preview.text = ""
+
+    def set_filter(self, name):
+        self.filter = name
+        for btn in self.filter_btns.children:
+            btn.background_color = BLUE if btn.text == name else INPUT_BG
+        self._render()
+
+    def create_offer(self, *_):
+        app = App.get_running_app()
+        if not app.private_key:
+            show_popup("Error", "Unlock wallet first.")
+            self.manager.current = "unlock"
+            return
+        import presence as pres
+        typ = self.offer_type.text.strip().upper() or "T"
+        if typ not in ("T", "P"):
+            show_popup("Error", "Type must be T or P.")
+            return
+        try:
+            qty = int(self.offer_qty.text.strip() or "1")
+        except ValueError:
+            show_popup("Error", "Quantity must be a number.")
+            return
+        ret = self.offer_ret.text.strip()
+        meta = pres.build_offer_metadata(typ, qty, ret)
+        self.status.text = "Creating offer…"
+
+        def worker():
+            try:
+                me = address_from_private_key(app.private_key)
+                payload = "0x" + os.urandom(32).hex()
+                # intendedTo = self (poster records to self, same as website)
+                result = sign_record(app.private_key, CHAIN_ID, me, payload, meta)
+                txr = txmod.send_record_signature(
+                    app.private_key, me, payload, result["signature"], meta
+                )
+                Clock.schedule_once(lambda dt: self._created(txr, meta, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._created(None, meta, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _created(self, txr, meta, err):
+        if err:
+            self.status.text = err
+            show_popup("Error", err)
+            return
+        self.status.text = f"Offer sent: {txr['txHash'][:18]}…"
+        show_popup("Created", f"Offer on-chain.
+{txr['txHash'][:22]}…")
+        self.load_offers()
+
+    def load_offers(self, *_):
+        self.status.text = "Loading offers…"
+        self.list_box.clear_widgets()
+
+        def worker():
+            try:
+                events = rpc.fetch_presence_events()
+                offers = rpc.build_presence_offers(events)
+                Clock.schedule_once(lambda dt: self._loaded(offers, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._loaded([], str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _loaded(self, offers, err):
+        if err:
+            self.status.text = err
+            return
+        self.offers = offers
+        self.status.text = f"{len(offers)} offers found"
+        self._render()
+
+    def _render(self):
+        self.list_box.clear_widgets()
+        app = App.get_running_app()
+        me = ""
+        if app.private_key:
+            try:
+                me = address_from_private_key(app.private_key).lower()
+            except Exception:
+                pass
+        f = self.filter
+        shown = 0
+        for o in self.offers:
+            if f == "OPEN" and o.get("status") != "OPEN":
+                continue
+            if f == "DONE" and o.get("status") != "DONE":
+                continue
+            if f == "T" and o.get("type") != "T":
+                continue
+            if f == "P" and o.get("type") != "P":
+                continue
+            self.list_box.add_widget(self._offer_card(o, me))
+            shown += 1
+            if shown >= 20:
+                break
+        if shown == 0:
+            self.status.text = "No offers match filter."
+
+    def _offer_card(self, o, me):
+        card = Card()
+        title = ("PUSH" if o.get("type") == "P" else "TRUST") + f"  #{o.get('id','')[:8]}"
+        st = o.get("status", "?")
+        card.add_widget(Label(
+            text=f"{title}  [{st}]", color=GREEN_BR if st == "OPEN" else TEXT,
+            bold=True, font_size=dp(13), size_hint_y=None, height=dp(22),
+        ))
+        card.add_widget(Label(
+            text=f"Poster {short_addr(o.get('signer',''))}  qty={o.get('qty','1')}  ret={o.get('ret') or '—'}",
+            color=TEXT_MUTED, font_size=dp(11), size_hint_y=None, height=dp(18),
+        ))
+        if o.get("accepter"):
+            card.add_widget(Label(
+                text=f"Accepter {short_addr(o['accepter'])}",
+                color=YELLOW, font_size=dp(11), size_hint_y=None, height=dp(16),
+            ))
+
+        is_mine = me and o.get("signer", "").lower() == me
+        is_acc = me and (o.get("accepter") or "").lower() == me
+        row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(4))
+
+        if st == "OPEN" and me and not is_mine:
+            b = BrandButton(text="ACCEPT", bg_color=GREEN)
+            b.bind(on_release=lambda btn, off=o: self.do_action("accept", off))
+            row.add_widget(b)
+        if st in ("OPEN", "ACCEPTED") and me and (is_mine or is_acc):
+            b = BrandButton(text="CANCEL", bg_color=DANGER)
+            b.bind(on_release=lambda btn, off=o: self.do_action("cancel", off))
+            row.add_widget(b)
+        if st == "ACCEPTED" and me and (is_mine or is_acc):
+            b = BrandButton(text="DONE", bg_color=BLUE)
+            b.bind(on_release=lambda btn, off=o: self.do_action("done", off))
+            row.add_widget(b)
+        if len(row.children):
+            card.add_widget(row)
+        return card
+
+    def do_action(self, action, offer):
+        app = App.get_running_app()
+        if not app.private_key:
+            show_popup("Error", "Unlock wallet first.")
+            return
+        import presence as pres
+        typ = offer.get("type", "T")
+        oid = offer.get("id", "")
+        if action == "accept":
+            meta = pres.build_accept_metadata(typ, oid)
+            to = offer.get("signer")
+        elif action == "done":
+            meta = pres.build_done_metadata(typ, oid)
+            me = address_from_private_key(app.private_key).lower()
+            to = offer.get("accepter") if offer.get("signer", "").lower() == me else offer.get("signer")
+            to = to or offer.get("signer")
+        else:
+            meta = pres.build_cancel_metadata(typ, oid)
+            me = address_from_private_key(app.private_key).lower()
+            to = offer.get("accepter") if offer.get("signer", "").lower() == me else offer.get("signer")
+            to = to or offer.get("signer")
+
+        self.status.text = f"{action}…"
+
+        def worker():
+            try:
+                payload = "0x" + os.urandom(32).hex()
+                result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                txr = txmod.send_record_signature(
+                    app.private_key, to, payload, result["signature"], meta
+                )
+                Clock.schedule_once(lambda dt: self._action_done(action, txr, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._action_done(action, None, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _action_done(self, action, txr, err):
+        if err:
+            self.status.text = err
+            show_popup("Error", err)
+            return
+        self.status.text = f"{action} tx {txr['txHash'][:18]}…"
+        show_popup("OK", f"{action.upper()} submitted.
+{txr['txHash'][:22]}…")
+        self.load_offers()
+
+
+
+
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -905,6 +1169,7 @@ class SOSApp(App):
         sm.add_widget(MessagesScreen(name="messages"))
         sm.add_widget(SignScreen(name="sign"))
         sm.add_widget(BatchScreen(name="batch"))
+        sm.add_widget(PresenceScreen(name="presence"))
         sm.add_widget(WalletScreen(name="wallet"))
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"

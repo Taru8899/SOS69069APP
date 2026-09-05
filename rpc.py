@@ -365,3 +365,112 @@ def fetch_messages(address: str, direction: str = "trust",
 
     # 2) Fallback to public RPCs
     return _fetch_via_rpc(address, direction, lookback_blocks, max_results)
+
+
+# ── Presence offer loading ───────────────────────────────────
+
+def fetch_presence_events(lookback_blocks: int = 30000, max_logs: int = 300) -> list:
+    """
+    Fetch recent SignatureRecorded logs (any address) and return parsed events
+    that look like presence protocol messages (O/A/D/X).
+    Uses Etherscan first for depth.
+    """
+    try:
+        logs = etherscan_get_logs(
+            CONTRACT, EVENT_TOPIC0,
+            from_block=0, to_block="latest",
+            page=1, offset=max_logs,
+        )
+    except Exception:
+        # RPC fallback – narrower window
+        def _do(rpc_url):
+            latest = _eth_block_number(rpc_url)
+            from_block = max(0, latest - lookback_blocks)
+            params = {
+                "address": CONTRACT,
+                "fromBlock": hex(from_block),
+                "toBlock": hex(latest),
+                "topics": [EVENT_TOPIC0],
+            }
+            return _eth_get_logs(params, rpc_url)
+        try:
+            logs = call_with_fallback(_do)
+        except Exception:
+            logs = []
+
+    events = []
+    for log in logs:
+        ev = _parse_signature_recorded(log)
+        if not ev:
+            continue
+        meta = (ev.get("metadata") or "").strip()
+        if not meta:
+            continue
+        if meta[0] in ("O", "A", "D", "X") and "|" in meta:
+            events.append(ev)
+    return events
+
+
+def build_presence_offers(events: list) -> list:
+    """
+    Turn raw presence events into offer objects with status.
+    Mirrors presence.js logic.
+    """
+    from presence import parse_offer_metadata, parse_action_metadata
+
+    offers = []
+    actions_by_id = {}
+
+    for ev in events:
+        meta = ev.get("metadata") or ""
+        action = parse_action_metadata(meta)
+        if action and action.get("id"):
+            oid = action["id"]
+            if oid not in actions_by_id:
+                actions_by_id[oid] = {"accepts": [], "dones": [], "cancels": []}
+            entry = {
+                "kind": action["kind"],
+                "type": action["type"],
+                "code": action["code"],
+                "signer": ev["signer"],
+                "intendedTo": ev["intendedTo"],
+                "timestamp": ev["timestamp"],
+                "txHash": ev["txHash"],
+            }
+            if action["kind"] == "A":
+                actions_by_id[oid]["accepts"].append(entry)
+            elif action["kind"] == "D":
+                actions_by_id[oid]["dones"].append(entry)
+            elif action["kind"] == "X":
+                actions_by_id[oid]["cancels"].append(entry)
+
+        parsed = parse_offer_metadata(meta)
+        if not parsed:
+            continue
+        offers.append({
+            **parsed,
+            "signer": ev["signer"],
+            "timestamp": ev["timestamp"],
+            "txHash": ev["txHash"],
+            "payloadHash": ev.get("payloadHash", ""),
+        })
+
+    for o in offers:
+        acts = actions_by_id.get(o["id"], {"accepts": [], "dones": [], "cancels": []})
+        o["accepter"] = acts["accepts"][0]["signer"] if acts["accepts"] else None
+        o["acceptTx"] = acts["accepts"][0]["txHash"] if acts["accepts"] else None
+        o["doneBy"] = acts["dones"][0]["signer"] if acts["dones"] else None
+        o["doneTx"] = acts["dones"][0]["txHash"] if acts["dones"] else None
+        o["canceledBy"] = acts["cancels"][0]["signer"] if acts["cancels"] else None
+        o["cancelTx"] = acts["cancels"][0]["txHash"] if acts["cancels"] else None
+        if acts["cancels"]:
+            o["status"] = "CANCELED"
+        elif acts["dones"]:
+            o["status"] = "DONE"
+        elif acts["accepts"]:
+            o["status"] = "ACCEPTED"
+        else:
+            o["status"] = "OPEN"
+
+    offers.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+    return offers
