@@ -188,7 +188,8 @@ class NavBar(BoxLayout):
             ("messages", "MSGS", GREEN_BR),
             ("presence", "PRES", YELLOW),
             ("legacy", "LEG", get_color_from_hex("#a78bfa")),
-            ("sign", "SIGN", ORANGE),
+            ("gas", "GAS", ORANGE),
+            ("sign", "SIGN", GREEN_BR),
             ("wallet", "KEY", TEXT_MUTED),
         ]
         for name, label, color in items:
@@ -1277,6 +1278,115 @@ class LegacyScreen(Screen):
 
 
 
+
+class GasScreen(Screen):
+    """Gas cost panel: Push / Trust / Effective / Total (Etherscan)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
+        root.add_widget(TitleLabel(text="Gas Costs"))
+        root.add_widget(SubLabel(text="ETH spent on Push / Trust / Effective", color=TEXT_MUTED))
+
+        card = Card()
+        self.addr_input = BrandInput(hint_text="0x address")
+        card.add_widget(self.addr_input)
+        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        b1 = BrandButton(text="CALCULATE", bg_color=ORANGE)
+        b1.bind(on_release=self.do_calc)
+        b2 = BrandButton(text="MINE", bg_color=INPUT_BG)
+        b2.bind(on_release=self.use_mine)
+        row.add_widget(b1)
+        row.add_widget(b2)
+        card.add_widget(row)
+        root.add_widget(card)
+
+        res = Card()
+        self.lbl_eff = Label(text="Effective: —", color=BLUE_SOFT, bold=True,
+                             font_size=dp(15), size_hint_y=None, height=dp(24), halign="left")
+        self.lbl_eff.bind(size=lambda *a: setattr(self.lbl_eff, "text_size", self.lbl_eff.size))
+        self.lbl_trust = Label(text="Trust: —", color=GREEN_BR, bold=True,
+                               font_size=dp(15), size_hint_y=None, height=dp(24), halign="left")
+        self.lbl_trust.bind(size=lambda *a: setattr(self.lbl_trust, "text_size", self.lbl_trust.size))
+        self.lbl_push = Label(text="Push: —", color=ORANGE, bold=True,
+                              font_size=dp(15), size_hint_y=None, height=dp(24), halign="left")
+        self.lbl_push.bind(size=lambda *a: setattr(self.lbl_push, "text_size", self.lbl_push.size))
+        self.lbl_total = Label(text="Total: —", color=YELLOW, bold=True,
+                               font_size=dp(16), size_hint_y=None, height=dp(26), halign="left")
+        self.lbl_total.bind(size=lambda *a: setattr(self.lbl_total, "text_size", self.lbl_total.size))
+        for w in (self.lbl_eff, self.lbl_trust, self.lbl_push, self.lbl_total):
+            res.add_widget(w)
+        self.status = SubLabel(text="", color=TEXT_MUTED)
+        res.add_widget(self.status)
+        root.add_widget(res)
+
+        root.add_widget(Label())
+        root.add_widget(NavBar(current="gas"))
+        self.add_widget(root)
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if app.private_key:
+            self.addr_input.text = address_from_private_key(app.private_key)
+        elif getattr(app, "last_check_address", None):
+            self.addr_input.text = app.last_check_address
+
+    def use_mine(self, *_):
+        app = App.get_running_app()
+        if app.private_key:
+            self.addr_input.text = address_from_private_key(app.private_key)
+            self.do_calc()
+        else:
+            try:
+                self.addr_input.text = ws.peek_address(app.user_data_dir)
+                self.do_calc()
+            except Exception:
+                show_popup("Info", "Unlock or create a wallet first.")
+
+    def do_calc(self, *_):
+        addr = self.addr_input.text.strip()
+        if not (addr.startswith("0x") and len(addr) == 42):
+            show_popup("Error", "Enter a valid 0x address.")
+            return
+        self.status.text = "Fetching txs from Etherscan… (may take a bit)"
+        for lbl in (self.lbl_eff, self.lbl_trust, self.lbl_push, self.lbl_total):
+            lbl.text = lbl.text.split(":")[0] + ": …"
+
+        def worker():
+            try:
+                data = rpc.gas_costs_for(addr)
+                Clock.schedule_once(lambda dt: self._show(data, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._show(None, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fmt(self, eth, usd, count, label_count):
+        s = f"{eth:.6f} ETH"
+        if usd is not None:
+            s += f"  (${usd:.2f})"
+        s += f"  · {count} {label_count}"
+        return s
+
+    def _show(self, data, err):
+        if err:
+            self.status.text = err
+            show_popup("Error", err)
+            return
+        self.lbl_eff.text = "Effective: " + self._fmt(
+            data["effectiveEth"], data["effectiveUsd"], data["effectiveCount"], "txs")
+        self.lbl_trust.text = "Trust: " + self._fmt(
+            data["trustEth"], data["trustUsd"], data["trustCount"], "txs")
+        self.lbl_push.text = "Push: " + self._fmt(
+            data["pushEth"], data["pushUsd"], data["pushCount"], "txs")
+        self.lbl_total.text = "Total: " + self._fmt(
+            data["totalEth"], data["totalUsd"],
+            data["pushCount"] + data["trustCount"], "txs")
+        price = data.get("ethUsd")
+        self.status.text = f"ETH price: ${price:.0f}" if price else "Done (no USD price)"
+
+
+
+
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1324,6 +1434,7 @@ class SOSApp(App):
         sm.add_widget(BatchScreen(name="batch"))
         sm.add_widget(PresenceScreen(name="presence"))
         sm.add_widget(LegacyScreen(name="legacy"))
+        sm.add_widget(GasScreen(name="gas"))
         sm.add_widget(WalletScreen(name="wallet"))
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"

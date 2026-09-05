@@ -474,3 +474,166 @@ def build_presence_offers(events: list) -> list:
 
     offers.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
     return offers
+
+
+# ── Gas cost analytics (Etherscan) ───────────────────────────
+
+RECORD_SELECTORS = {
+    "0x1c7c27c8",  # recordSignature(address,address,bytes32,bytes,string)
+    # recordSignatureOne may differ; include common variants if needed
+}
+
+
+def _etherscan_txlist(address: str, page: int = 1, offset: int = 1000) -> list:
+    body = _etherscan_get({
+        "module": "account",
+        "action": "txlist",
+        "address": address,
+        "startblock": 0,
+        "endblock": 99999999,
+        "page": page,
+        "offset": offset,
+        "sort": "asc",
+    })
+    if body.get("status") == "1" and isinstance(body.get("result"), list):
+        return body["result"]
+    if isinstance(body.get("result"), list):
+        return body["result"]
+    msg = str(body.get("message") or body.get("result") or "")
+    if "no transactions" in msg.lower():
+        return []
+    raise RuntimeError(msg or "txlist failed")
+
+
+def fetch_eth_usd() -> float | None:
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "ethereum", "vs_currencies": "usd"},
+            timeout=8,
+        )
+        return float(r.json()["ethereum"]["usd"])
+    except Exception:
+        return None
+
+
+def gas_costs_for(address: str) -> dict:
+    """
+    Compute Push / Trust / Effective / Total gas costs for an address.
+    Mirrors ledger.js gas panel logic (simplified).
+    Returns dict with wei totals, tx counts, and optional USD.
+    """
+    address = address.strip().lower()
+    if not (address.startswith("0x") and len(address) == 42):
+        raise ValueError("Invalid address")
+
+    eth_usd = fetch_eth_usd()
+
+    # Stats for effective count
+    try:
+        stats = stats_of(address)
+        effective_n = max(0, int(stats["effective"]))
+    except Exception:
+        effective_n = 0
+
+    # --- Push: user's own successful txs to the contract ---
+    own_txs = []
+    page = 1
+    while page <= 20:
+        batch = _etherscan_txlist(address, page=page, offset=1000)
+        if not batch:
+            break
+        own_txs.extend(batch)
+        if len(batch) < 1000:
+            break
+        page += 1
+
+    push_wei = 0
+    push_count = 0
+    for tx in own_txs:
+        if (tx.get("to") or "").lower() != CONTRACT.lower():
+            continue
+        if tx.get("isError") != "0":
+            continue
+        method = (tx.get("methodId") or (tx.get("input") or "")[:10]).lower()
+        if method not in RECORD_SELECTORS and not method.startswith("0x1c7c27c8"):
+            # still count any successful call to contract from user as push-ish
+            if not (tx.get("input") or "").startswith("0x1c7c27c8"):
+                continue
+        fee = int(tx.get("gasUsed") or 0) * int(tx.get("gasPrice") or 0)
+        push_wei += fee
+        push_count += 1
+
+    # --- Trust: contract txs where intendedTo == address ---
+    # Pull contract transactions and decode intendedTo from input when possible
+    contract_txs = []
+    page = 1
+    while page <= 30:
+        batch = _etherscan_txlist(CONTRACT, page=page, offset=1000)
+        if not batch:
+            break
+        contract_txs.extend(batch)
+        if len(batch) < 1000:
+            break
+        page += 1
+
+    trust_entries = []  # (fee_wei, block)
+    for tx in contract_txs:
+        if tx.get("isError") != "0":
+            continue
+        inp = tx.get("input") or ""
+        if not inp.startswith("0x1c7c27c8"):
+            continue
+        # ABI: selector + signer(32) + intendedTo(32) + ...
+        # intendedTo is second address arg → bytes 16:36 of the first arg slots
+        try:
+            data = bytes.fromhex(inp[10:])  # skip selector
+            # slot0 = signer, slot1 = intendedTo
+            if len(data) < 64:
+                continue
+            intended = "0x" + data[32:64][-20:].hex()
+            if intended.lower() != address:
+                continue
+            fee = int(tx.get("gasUsed") or 0) * int(tx.get("gasPrice") or 0)
+            block = int(tx.get("blockNumber") or 0)
+            trust_entries.append((fee, block))
+        except Exception:
+            continue
+
+    trust_wei = sum(f for f, _ in trust_entries)
+    trust_count = len(trust_entries)
+
+    # Effective gas = sum of most recent N trust txs (N = effective count)
+    trust_entries.sort(key=lambda x: x[1], reverse=True)
+    n = min(effective_n, len(trust_entries))
+    effective_wei = sum(trust_entries[i][0] for i in range(n))
+
+    total_wei = push_wei + trust_wei
+
+    def wei_to_eth(w):
+        return w / 1e18
+
+    def usd(w):
+        if eth_usd is None:
+            return None
+        return wei_to_eth(w) * eth_usd
+
+    return {
+        "pushWei": push_wei,
+        "trustWei": trust_wei,
+        "effectiveWei": effective_wei,
+        "totalWei": total_wei,
+        "pushCount": push_count,
+        "trustCount": trust_count,
+        "effectiveCount": n,
+        "effectiveN": effective_n,
+        "pushEth": wei_to_eth(push_wei),
+        "trustEth": wei_to_eth(trust_wei),
+        "effectiveEth": wei_to_eth(effective_wei),
+        "totalEth": wei_to_eth(total_wei),
+        "pushUsd": usd(push_wei),
+        "trustUsd": usd(trust_wei),
+        "effectiveUsd": usd(effective_wei),
+        "totalUsd": usd(total_wei),
+        "ethUsd": eth_usd,
+    }
