@@ -201,23 +201,25 @@ def _sign_legacy_tx(privkey_int: int, nonce: int, gas_price: int,
 
 def send_record_signature(privkey_hex: str, intended_to: str,
                           payload_hash: str, signature_hex: str,
-                          metadata: str) -> dict:
+                          metadata: str, signer: str = None) -> dict:
     """
     Build, sign and broadcast recordSignature tx.
+    privkey_hex = wallet that pays gas (tx sender).
+    signer = address that produced the EIP-712 signature (defaults to sender).
     Returns {"txHash": "...", "from": "...", "gasLimit": int, "gasPrice": int}
     """
     privkey_int = int(privkey_hex.replace("0x", ""), 16)
     pub = privkey_to_pubkey(privkey_int)
-    # address from pubkey
     from pure_crypto import pubkey_to_address
     from_addr = pubkey_to_address(pub)
+    signer_addr = signer if signer else from_addr
 
     sig_bytes = bytes.fromhex(signature_hex.replace("0x", ""))
     if len(sig_bytes) != 65:
         raise ValueError("Signature must be 65 bytes")
 
     data = encode_record_signature(
-        from_addr, intended_to, payload_hash, sig_bytes, metadata
+        signer_addr, intended_to, payload_hash, sig_bytes, metadata
     )
 
     nonce = get_nonce(from_addr)

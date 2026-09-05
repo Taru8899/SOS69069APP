@@ -187,9 +187,9 @@ class NavBar(BoxLayout):
             ("check", "CHECK", BLUE_SOFT),
             ("messages", "MSGS", GREEN_BR),
             ("presence", "PRES", YELLOW),
-            ("legacy", "LEG", get_color_from_hex("#a78bfa")),
-            ("gas", "GAS", ORANGE),
             ("sign", "SIGN", GREEN_BR),
+            ("ss", "S&S", ORANGE),
+            ("gas", "GAS", TEXT_MUTED),
             ("wallet", "KEY", TEXT_MUTED),
         ]
         for name, label, color in items:
@@ -1387,6 +1387,182 @@ class GasScreen(Screen):
 
 
 
+
+class SignSubmitScreen(Screen):
+    """
+    Split flow (like sign-submit.html):
+      1) SIGN with the local wallet (free, offline EIP-712)
+      2) Copy JSON payload
+      3) SUBMIT later with any wallet that pays gas
+    For mobile we keep one local key: Sign produces payload;
+    Submit broadcasts it (same or after re-unlock).
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
+        root.add_widget(TitleLabel(text="Sign & Submit"))
+        root.add_widget(SubLabel(text="1) Sign free  →  2) Submit pays gas", color=TEXT_MUTED))
+
+        # SIGN panel
+        sign_card = Card()
+        sign_card.add_widget(SubLabel(text="Step 1 — Sign (no gas)", color=YELLOW))
+        self.ss_to = BrandInput(hint_text="intendedTo (0x...)")
+        self.ss_to.text = "0x1C10e6574ee696f54b21A611a21313E4714628ad"
+        sign_card.add_widget(self.ss_to)
+        self.ss_meta = BrandInput(hint_text="Metadata (max 64 chars)")
+        sign_card.add_widget(self.ss_meta)
+        self.ss_count = SubLabel(text="0/64", color=TEXT_MUTED)
+        sign_card.add_widget(self.ss_count)
+        self.ss_meta.bind(text=lambda *a: setattr(
+            self.ss_count, "text",
+            f"{utf8_len(self.ss_meta.text)}/64"
+        ))
+        sbtn = BrandButton(text="SIGN PAYLOAD", bg_color=BLUE)
+        sbtn.bind(on_release=self.do_ss_sign)
+        sign_card.add_widget(sbtn)
+        root.add_widget(sign_card)
+
+        self.payload_box = Label(
+            text="Signed payload JSON will appear here",
+            color=GREEN_BR, font_size=dp(11),
+            size_hint_y=None, height=dp(90),
+            halign="left", valign="top",
+        )
+        self.payload_box.bind(size=lambda *a: setattr(self.payload_box, "text_size", self.payload_box.size))
+        root.add_widget(self.payload_box)
+
+        # SUBMIT panel
+        sub_card = Card()
+        sub_card.add_widget(SubLabel(text="Step 2 — Submit (pays gas)", color=ORANGE))
+        self.ss_paste = MultiInput(hint_text="Paste signed payload JSON here")
+        self.ss_paste.height = dp(80)
+        sub_card.add_widget(self.ss_paste)
+        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        loadb = BrandButton(text="LOAD", bg_color=INPUT_BG)
+        loadb.bind(on_release=self.load_payload)
+        sendb = BrandButton(text="SUBMIT ON-CHAIN", bg_color=GREEN)
+        sendb.bind(on_release=self.do_ss_submit)
+        row.add_widget(loadb)
+        row.add_widget(sendb)
+        sub_card.add_widget(row)
+        self.ss_status = SubLabel(text="", color=TEXT_MUTED)
+        sub_card.add_widget(self.ss_status)
+        root.add_widget(sub_card)
+
+        root.add_widget(NavBar(current="ss"))
+        self.add_widget(root)
+        self._payload = None
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if app.private_key and not self.ss_to.text:
+            pass  # keep default recipient
+
+    def do_ss_sign(self, *_):
+        app = App.get_running_app()
+        if not app.private_key:
+            show_popup("Error", "Unlock wallet first to sign.")
+            self.manager.current = "unlock"
+            return
+        to = self.ss_to.text.strip()
+        meta = self.ss_meta.text.strip()
+        if not (to.startswith("0x") and len(to) == 42):
+            show_popup("Error", "Invalid intendedTo address.")
+            return
+        if not meta:
+            show_popup("Error", "Metadata required.")
+            return
+        if utf8_len(meta) > 64:
+            show_popup("Error", "Metadata exceeds 64 characters.")
+            return
+        self.ss_status.text = "Signing…"
+        payload_hash = "0x" + os.urandom(32).hex()
+
+        def worker():
+            try:
+                result = sign_record(app.private_key, CHAIN_ID, to, payload_hash, meta)
+                import json
+                blob = {
+                    "signer": result["signer"],
+                    "intendedTo": to,
+                    "payloadHash": payload_hash,
+                    "metadata": meta,
+                    "signature": result["signature"],
+                    "chainId": str(CHAIN_ID),
+                    "contract": CONTRACT_ADDRESS,
+                }
+                Clock.schedule_once(lambda dt: self._signed(blob, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._signed(None, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _signed(self, blob, err):
+        if err:
+            self.ss_status.text = err
+            show_popup("Error", err)
+            return
+        self._payload = blob
+        import json
+        raw = json.dumps(blob, indent=2)
+        self.payload_box.text = raw
+        self.ss_paste.text = raw
+        self.ss_status.text = "Signed — payload ready. Submit when ready."
+        show_popup("Signed", "Payload created.\nNo transaction was sent.")
+
+    def load_payload(self, *_):
+        import json
+        try:
+            blob = json.loads(self.ss_paste.text.strip())
+            for k in ("signer", "intendedTo", "payloadHash", "signature", "metadata"):
+                if k not in blob:
+                    raise ValueError(f"Missing field: {k}")
+            self._payload = blob
+            self.ss_status.text = "Payload loaded — ready to submit"
+            show_popup("Loaded", "Payload OK.")
+        except Exception as e:
+            self._payload = None
+            show_popup("Error", f"Invalid payload: {e}")
+
+    def do_ss_submit(self, *_):
+        app = App.get_running_app()
+        if not app.private_key:
+            show_popup("Error", "Unlock the submitting wallet first.")
+            self.manager.current = "unlock"
+            return
+        if not self._payload:
+            self.load_payload()
+            if not self._payload:
+                return
+        blob = self._payload
+        self.ss_status.text = "Submitting…"
+
+        def worker():
+            try:
+                txr = txmod.send_record_signature(
+                    app.private_key,
+                    blob["intendedTo"],
+                    blob["payloadHash"],
+                    blob["signature"],
+                    blob["metadata"],
+                    signer=blob.get("signer"),
+                )
+                Clock.schedule_once(lambda dt: self._submitted(txr, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._submitted(None, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _submitted(self, txr, err):
+        if err:
+            self.ss_status.text = err
+            show_popup("Error", err)
+            return
+        self.ss_status.text = f"Submitted {txr['txHash'][:20]}…"
+        show_popup("Submitted", "On-chain: " + txr["txHash"][:28] + "…")
+
+
+
+
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1435,6 +1611,7 @@ class SOSApp(App):
         sm.add_widget(PresenceScreen(name="presence"))
         sm.add_widget(LegacyScreen(name="legacy"))
         sm.add_widget(GasScreen(name="gas"))
+        sm.add_widget(SignSubmitScreen(name="ss"))
         sm.add_widget(WalletScreen(name="wallet"))
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"
