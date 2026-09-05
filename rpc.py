@@ -6,9 +6,22 @@ import requests
 from pure_crypto import keccak256
 
 # ── Config ───────────────────────────────────────────────────
-ETHERSCAN_API_KEY = "RU99NEJZV9F2EWS7A97RWVHDJN1ZQ29Q99"
+DEFAULT_ETHERSCAN_API_KEY = "RU99NEJZV9F2EWS7A97RWVHDJN1ZQ29Q99"
+# Runtime key (user can override via set_etherscan_api_key)
+ETHERSCAN_API_KEY = DEFAULT_ETHERSCAN_API_KEY
 ETHERSCAN_BASE = "https://api.etherscan.io/v2/api"
 CHAIN_ID = 1
+
+
+def set_etherscan_api_key(key: str | None):
+    """Set API key. Empty/None resets to built-in default."""
+    global ETHERSCAN_API_KEY
+    key = (key or "").strip()
+    ETHERSCAN_API_KEY = key if key else DEFAULT_ETHERSCAN_API_KEY
+
+
+def get_etherscan_api_key() -> str:
+    return ETHERSCAN_API_KEY
 
 RPC_LIST = [
     "https://eth.drpc.org",

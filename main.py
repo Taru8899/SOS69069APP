@@ -175,6 +175,47 @@ def show_popup(title, message):
     popup.open()
 
 
+
+
+def confirm_gas_then(callback, title="Confirm gas"):
+    """Fetch gas price, show confirm popup, call callback() if user accepts."""
+    def worker():
+        try:
+            info = txmod.get_gas_price_info()
+            gwei = info["gwei"]
+            msg = f"Network gas ~ {gwei:.2f} gwei\n(with 10% buffer)\n\nContinue?"
+            def show():
+                content = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
+                msg_l = Label(text=msg, color=TEXT, font_size=dp(14),
+                              halign="center", valign="middle")
+                msg_l.bind(size=lambda *a: setattr(msg_l, "text_size", msg_l.size))
+                content.add_widget(msg_l)
+                row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+                cancel = BrandButton(text="CANCEL", bg_color=INPUT_BG)
+                ok = BrandButton(text="CONTINUE", bg_color=GREEN)
+                row.add_widget(cancel)
+                row.add_widget(ok)
+                content.add_widget(row)
+                popup = Popup(title=title, title_color=TEXT, title_size=dp(15),
+                              content=content, size_hint=(0.9, 0.42),
+                              background="", separator_color=BORDER, auto_dismiss=False)
+                with popup.canvas.before:
+                    Color(*CARD_BG)
+                    popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
+                popup.bind(pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
+                           size=lambda *a: setattr(popup._bg, "size", popup.size))
+                cancel.bind(on_release=popup.dismiss)
+                def _ok(*_):
+                    popup.dismiss()
+                    callback()
+                ok.bind(on_release=_ok)
+                popup.open()
+            Clock.schedule_once(lambda dt: show(), 0)
+        except Exception as e:
+            Clock.schedule_once(lambda dt: show_popup("Gas check failed", str(e)), 0)
+    threading.Thread(target=worker, daemon=True).start()
+
+
 class NavBar(BoxLayout):
     def __init__(self, current="", **kwargs):
         super().__init__(**kwargs)
@@ -686,23 +727,27 @@ class SignScreen(Screen):
         if not prep:
             return
         app, to, payload, meta = prep
-        self.result.text = "Signing…" if not send else "Signing & sending…"
 
-        def worker():
-            try:
-                result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
-                if not send:
-                    Clock.schedule_once(lambda dt: self._done_sign(result, meta, None), 0)
-                    return
-                # broadcast
-                txr = txmod.send_record_signature(
-                    app.private_key, to, payload, result["signature"], meta
-                )
-                Clock.schedule_once(lambda dt: self._done_send(result, meta, txr, None), 0)
-            except Exception as e:
-                Clock.schedule_once(lambda dt: self._done_sign(None, meta, str(e)), 0)
+        def start():
+            self.result.text = "Signing…" if not send else "Signing & sending…"
+            def worker():
+                try:
+                    result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                    if not send:
+                        Clock.schedule_once(lambda dt: self._done_sign(result, meta, None), 0)
+                        return
+                    txr = txmod.send_record_signature(
+                        app.private_key, to, payload, result["signature"], meta
+                    )
+                    Clock.schedule_once(lambda dt: self._done_send(result, meta, txr, None), 0)
+                except Exception as e:
+                    Clock.schedule_once(lambda dt: self._done_sign(None, meta, str(e)), 0)
+            threading.Thread(target=worker, daemon=True).start()
 
-        threading.Thread(target=worker, daemon=True).start()
+        if send:
+            confirm_gas_then(start, title="Confirm Sign & Send")
+        else:
+            start()
 
     def _done_sign(self, result, meta, err):
         if err:
@@ -823,27 +868,44 @@ class BatchScreen(Screen):
             return
         if send and len(self.pairs) > 10:
             show_popup("Warning", "Sending more than 10 txs from mobile may take a while and cost gas. Continue only if you have enough ETH.")
-        self.sign_btn.disabled = True
-        self.send_btn.disabled = True
-        self.result.text = "Sending…" if send else "Signing…"
 
-        def worker():
-            out = []
-            try:
-                for i, (to, meta) in enumerate(self.pairs):
-                    payload = "0x" + os.urandom(32).hex()
-                    r = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
-                    entry = {"to": to, "metadata": meta, "signature": r["signature"], "payload": payload}
+        def start():
+            self.sign_btn.disabled = True
+            self.send_btn.disabled = True
+            self.result.text = "Sending…" if send else "Signing…"
+
+            def worker():
+                out = []
+                try:
+                    nonce = None
+                    gas_price = None
                     if send:
-                        txr = txmod.send_record_signature(
-                            app.private_key, to, payload, r["signature"], meta
-                        )
-                        entry["txHash"] = txr["txHash"]
-                    out.append(entry)
-                Clock.schedule_once(lambda dt: self._done(out, send, None), 0)
-            except Exception as e:
-                Clock.schedule_once(lambda dt: self._done(out, send, str(e)), 0)
-        threading.Thread(target=worker, daemon=True).start()
+                        from pure_crypto import pubkey_to_address, privkey_to_pubkey
+                        pk = int(app.private_key.replace("0x", ""), 16)
+                        from_addr = pubkey_to_address(privkey_to_pubkey(pk))
+                        nonce = txmod.get_nonce(from_addr)
+                        gas_price = txmod.get_gas_price()
+                    for i, (to, meta) in enumerate(self.pairs):
+                        payload = "0x" + os.urandom(32).hex()
+                        r = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                        entry = {"to": to, "metadata": meta, "signature": r["signature"], "payload": payload}
+                        if send:
+                            txr = txmod.send_record_signature(
+                                app.private_key, to, payload, r["signature"], meta,
+                                nonce=nonce, gas_price=gas_price,
+                            )
+                            entry["txHash"] = txr["txHash"]
+                            nonce = txr["nonce"] + 1  # next tx
+                        out.append(entry)
+                    Clock.schedule_once(lambda dt: self._done(out, send, None), 0)
+                except Exception as e:
+                    Clock.schedule_once(lambda dt: self._done(out, send, str(e)), 0)
+            threading.Thread(target=worker, daemon=True).start()
+
+        if send:
+            confirm_gas_then(start, title="Confirm batch send")
+        else:
+            start()
 
     def _done(self, results, send, err):
         self.sign_btn.disabled = False
@@ -1291,6 +1353,16 @@ class GasScreen(Screen):
         card = Card()
         self.addr_input = BrandInput(hint_text="0x address")
         card.add_widget(self.addr_input)
+        self.api_key_input = BrandInput(hint_text="Etherscan API key (optional)")
+        try:
+            cur = rpc.get_etherscan_api_key()
+            # show blank if still the built-in default (user can paste own)
+            from rpc import DEFAULT_ETHERSCAN_API_KEY
+            if cur != DEFAULT_ETHERSCAN_API_KEY:
+                self.api_key_input.text = cur
+        except Exception:
+            pass
+        card.add_widget(self.api_key_input)
         row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
         b1 = BrandButton(text="CALCULATE", bg_color=ORANGE)
         b1.bind(on_release=self.do_calc)
@@ -1348,6 +1420,11 @@ class GasScreen(Screen):
         if not (addr.startswith("0x") and len(addr) == 42):
             show_popup("Error", "Enter a valid 0x address.")
             return
+        # optional user API key
+        try:
+            rpc.set_etherscan_api_key(self.api_key_input.text.strip())
+        except Exception:
+            pass
         self.status.text = "Fetching txs from Etherscan… (may take a bit)"
         for lbl in (self.lbl_eff, self.lbl_trust, self.lbl_push, self.lbl_total):
             lbl.text = lbl.text.split(":")[0] + ": …"
@@ -1535,22 +1612,25 @@ class SignSubmitScreen(Screen):
             if not self._payload:
                 return
         blob = self._payload
-        self.ss_status.text = "Submitting…"
 
-        def worker():
-            try:
-                txr = txmod.send_record_signature(
-                    app.private_key,
-                    blob["intendedTo"],
-                    blob["payloadHash"],
-                    blob["signature"],
-                    blob["metadata"],
-                    signer=blob.get("signer"),
-                )
-                Clock.schedule_once(lambda dt: self._submitted(txr, None), 0)
-            except Exception as e:
-                Clock.schedule_once(lambda dt: self._submitted(None, str(e)), 0)
-        threading.Thread(target=worker, daemon=True).start()
+        def start():
+            self.ss_status.text = "Submitting…"
+            def worker():
+                try:
+                    txr = txmod.send_record_signature(
+                        app.private_key,
+                        blob["intendedTo"],
+                        blob["payloadHash"],
+                        blob["signature"],
+                        blob["metadata"],
+                        signer=blob.get("signer"),
+                    )
+                    Clock.schedule_once(lambda dt: self._submitted(txr, None), 0)
+                except Exception as e:
+                    Clock.schedule_once(lambda dt: self._submitted(None, str(e)), 0)
+            threading.Thread(target=worker, daemon=True).start()
+
+        confirm_gas_then(start, title="Confirm submit")
 
     def _submitted(self, txr, err):
         if err:

@@ -137,6 +137,19 @@ def get_gas_price() -> int:
     return int(int(result, 16) * 1.1)
 
 
+def get_gas_price_info() -> dict:
+    """Return current gas price in wei and gwei (with 10% bump)."""
+    result = _rpc("eth_gasPrice", [])
+    base = int(result, 16)
+    bumped = int(base * 1.1)
+    return {
+        "wei": bumped,
+        "baseWei": base,
+        "gwei": bumped / 1e9,
+        "baseGwei": base / 1e9,
+    }
+
+
 def estimate_gas(from_addr: str, to: str, data: bytes) -> int:
     try:
         result = _rpc("eth_estimateGas", [{
@@ -201,12 +214,14 @@ def _sign_legacy_tx(privkey_int: int, nonce: int, gas_price: int,
 
 def send_record_signature(privkey_hex: str, intended_to: str,
                           payload_hash: str, signature_hex: str,
-                          metadata: str, signer: str = None) -> dict:
+                          metadata: str, signer: str = None,
+                          nonce: int = None, gas_price: int = None) -> dict:
     """
     Build, sign and broadcast recordSignature tx.
     privkey_hex = wallet that pays gas (tx sender).
     signer = address that produced the EIP-712 signature (defaults to sender).
-    Returns {"txHash": "...", "from": "...", "gasLimit": int, "gasPrice": int}
+    nonce / gas_price: optional overrides (for safe batching).
+    Returns {"txHash": "...", "from": "...", "gasLimit": int, "gasPrice": int, "nonce": int}
     """
     privkey_int = int(privkey_hex.replace("0x", ""), 16)
     pub = privkey_to_pubkey(privkey_int)
@@ -222,8 +237,10 @@ def send_record_signature(privkey_hex: str, intended_to: str,
         signer_addr, intended_to, payload_hash, sig_bytes, metadata
     )
 
-    nonce = get_nonce(from_addr)
-    gas_price = get_gas_price()
+    if nonce is None:
+        nonce = get_nonce(from_addr)
+    if gas_price is None:
+        gas_price = get_gas_price()
     gas_limit = estimate_gas(from_addr, CONTRACT, data)
 
     raw = _sign_legacy_tx(
