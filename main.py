@@ -19,6 +19,7 @@ from datetime import datetime
 from sos_core import sign_record, address_from_private_key, CONTRACT_ADDRESS
 import wallet_storage as ws
 import rpc
+import tx as txmod
 
 CHAIN_ID = 1
 MAX_META = 64
@@ -612,13 +613,18 @@ class SignScreen(Screen):
         self.metadata.bind(text=self._update_count)
         self.code.bind(text=self._update_count)
 
-        sign_btn = BrandButton(text="SIGN", bg_color=GREEN)
-        sign_btn.bind(on_release=self.do_sign)
-        card.add_widget(sign_btn)
+        btn_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
+        sign_btn = BrandButton(text="SIGN ONLY", bg_color=INPUT_BG)
+        sign_btn.bind(on_release=lambda *_: self.do_sign(send=False))
+        send_btn = BrandButton(text="SIGN & SEND", bg_color=GREEN)
+        send_btn.bind(on_release=lambda *_: self.do_sign(send=True))
+        btn_row.add_widget(sign_btn)
+        btn_row.add_widget(send_btn)
+        card.add_widget(btn_row)
         root.add_widget(card)
 
         self.result = Label(text="", color=GREEN_BR, font_size=dp(12),
-                            size_hint_y=None, height=dp(90),
+                            size_hint_y=None, height=dp(100),
                             halign="left", valign="top")
         self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
         root.add_widget(self.result)
@@ -645,11 +651,11 @@ class SignScreen(Screen):
         self.counter.text = f"{n}/{limit} characters"
         self.counter.color = DANGER if n > limit else TEXT_MUTED
 
-    def do_sign(self, *_):
+    def _prepare(self):
         app = App.get_running_app()
         if not app.private_key:
             show_popup("Error", "Wallet is locked.")
-            return
+            return None
         to = self.recipient.text.strip()
         payload = self.payload.text.strip() or ("0x" + os.urandom(32).hex())
         code = self.code.text.strip().lower()
@@ -659,20 +665,60 @@ class SignScreen(Screen):
             meta = f"{text} {code}".strip() if text else code
             if utf8_len(meta) > MAX_META:
                 show_popup("Error", "Message + code exceeds 64 characters.")
-                return
+                return None
         else:
             meta = text
             if utf8_len(meta) > MAX_META:
                 show_popup("Error", "Metadata exceeds 64 characters.")
-                return
+                return None
         if not (to.startswith("0x") and len(to) == 42):
             show_popup("Error", "Invalid recipient address.")
+            return None
+        return app, to, payload, meta
+
+    def do_sign(self, send=False):
+        prep = self._prepare()
+        if not prep:
             return
-        try:
-            result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
-            self.result.text = f"Signature:\n{result['signature']}\n\nMetadata: {meta}"
-        except Exception as e:
-            show_popup("Error", f"Signing failed: {e}")
+        app, to, payload, meta = prep
+        self.result.text = "Signing…" if not send else "Signing & sending…"
+
+        def worker():
+            try:
+                result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                if not send:
+                    Clock.schedule_once(lambda dt: self._done_sign(result, meta, None), 0)
+                    return
+                # broadcast
+                txr = txmod.send_record_signature(
+                    app.private_key, to, payload, result["signature"], meta
+                )
+                Clock.schedule_once(lambda dt: self._done_send(result, meta, txr, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._done_sign(None, meta, str(e)), 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _done_sign(self, result, meta, err):
+        if err:
+            self.result.text = f"Error: {err}"
+            show_popup("Error", err)
+            return
+        self.result.text = f"Signature:\n{result['signature']}\n\nMetadata: {meta}"
+
+    def _done_send(self, result, meta, txr, err):
+        if err:
+            self.result.text = f"Error: {err}"
+            show_popup("Error", err)
+            return
+        txh = txr["txHash"]
+        self.result.text = (
+            f"SENT on-chain\n"
+            f"Tx: {txh}\n"
+            f"Metadata: {meta}\n"
+            f"Gas limit: {txr['gasLimit']}"
+        )
+        show_popup("Sent", f"Transaction submitted.\n\n{txh[:22]}…")
 
 
 class BatchScreen(Screen):
@@ -706,13 +752,19 @@ class BatchScreen(Screen):
         self.preview.bind(size=lambda *a: setattr(self.preview, "text_size", self.preview.size))
         root.add_widget(self.preview)
 
-        self.sign_btn = BrandButton(text="SIGN ALL", bg_color=GREEN)
-        self.sign_btn.bind(on_release=self.sign_all)
+        btn_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
+        self.sign_btn = BrandButton(text="SIGN ALL", bg_color=INPUT_BG)
+        self.sign_btn.bind(on_release=lambda *_: self.run_batch(send=False))
         self.sign_btn.disabled = True
-        root.add_widget(self.sign_btn)
+        self.send_btn = BrandButton(text="SIGN & SEND ALL", bg_color=GREEN)
+        self.send_btn.bind(on_release=lambda *_: self.run_batch(send=True))
+        self.send_btn.disabled = True
+        btn_row.add_widget(self.sign_btn)
+        btn_row.add_widget(self.send_btn)
+        root.add_widget(btn_row)
 
         self.result = Label(text="", color=GREEN_BR, font_size=dp(11),
-                            size_hint_y=None, height=dp(70),
+                            size_hint_y=None, height=dp(80),
                             halign="left", valign="top")
         self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
         root.add_widget(self.result)
@@ -752,10 +804,11 @@ class BatchScreen(Screen):
             preview += f"\n… +{len(self.pairs)-8} more"
         self.preview.text = preview
         self.sign_btn.disabled = False
+        self.send_btn.disabled = False
         self.info.text = f"{len(self.pairs)} pairs ready"
         self.result.text = ""
 
-    def sign_all(self, *_):
+    def run_batch(self, send=False):
         app = App.get_running_app()
         if not app.private_key:
             show_popup("Error", "Wallet is locked.")
@@ -763,8 +816,11 @@ class BatchScreen(Screen):
         if not self.pairs:
             show_popup("Error", "Load pairs first.")
             return
+        if send and len(self.pairs) > 10:
+            show_popup("Warning", "Sending more than 10 txs from mobile may take a while and cost gas. Continue only if you have enough ETH.")
         self.sign_btn.disabled = True
-        self.result.text = "Signing…"
+        self.send_btn.disabled = True
+        self.result.text = "Sending…" if send else "Signing…"
 
         def worker():
             out = []
@@ -772,24 +828,36 @@ class BatchScreen(Screen):
                 for i, (to, meta) in enumerate(self.pairs):
                     payload = "0x" + os.urandom(32).hex()
                     r = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
-                    out.append({"to": to, "metadata": meta, "signature": r["signature"]})
-                Clock.schedule_once(lambda dt: self._done(out, None), 0)
+                    entry = {"to": to, "metadata": meta, "signature": r["signature"], "payload": payload}
+                    if send:
+                        txr = txmod.send_record_signature(
+                            app.private_key, to, payload, r["signature"], meta
+                        )
+                        entry["txHash"] = txr["txHash"]
+                    out.append(entry)
+                Clock.schedule_once(lambda dt: self._done(out, send, None), 0)
             except Exception as e:
-                Clock.schedule_once(lambda dt: self._done([], str(e)), 0)
+                Clock.schedule_once(lambda dt: self._done(out, send, str(e)), 0)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _done(self, results, err):
+    def _done(self, results, send, err):
         self.sign_btn.disabled = False
+        self.send_btn.disabled = False
         if err:
-            self.result.text = f"Error: {err}"
+            self.result.text = f"Error after {len(results)} ok: {err}"
+            show_popup("Error", err)
             return
-        lines = [f"{i+1}. {short_addr(r['to'])}  sig={r['signature'][:18]}…" for i, r in enumerate(results)]
-        self.result.text = f"Signed {len(results)} messages:\n" + "\n".join(lines[:6])
+        if send:
+            lines = [f"{i+1}. {short_addr(r['to'])}  {r.get('txHash','')[:18]}…" for i, r in enumerate(results)]
+            self.result.text = f"Sent {len(results)} txs:\n" + "\n".join(lines[:6])
+            show_popup("Done", f"Broadcast {len(results)} transactions.")
+        else:
+            lines = [f"{i+1}. {short_addr(r['to'])}  sig={r['signature'][:18]}…" for i, r in enumerate(results)]
+            self.result.text = f"Signed {len(results)} messages:\n" + "\n".join(lines[:6])
+            show_popup("Done", f"Signed {len(results)} messages.")
         if len(results) > 6:
             self.result.text += f"\n… +{len(results)-6} more"
-        # store for possible later submit
         App.get_running_app().last_batch_results = results
-        show_popup("Done", f"Signed {len(results)} messages.\nCopy signatures from the result area.")
 
 
 class WalletScreen(Screen):
