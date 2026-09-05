@@ -9,10 +9,13 @@ from kivy.graphics import Color, RoundedRectangle
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
+from kivy.clock import Clock
 import os
+import threading
 
 from sos_core import sign_record, address_from_private_key, CONTRACT_ADDRESS
 import wallet_storage as ws
+import rpc
 
 CHAIN_ID = 1
 
@@ -126,6 +129,45 @@ def show_popup(title, message):
     content.add_widget(close)
     popup.open()
 
+
+# ── Navigation bar ───────────────────────────────────────────
+
+class NavBar(BoxLayout):
+    def __init__(self, current="", **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = "horizontal"
+        self.size_hint_y = None
+        self.height = dp(48)
+        self.spacing = dp(6)
+        self.padding = [dp(4), 0]
+
+        screens = [
+            ("check", "CHECK", BLUE_SOFT),
+            ("wallet", "SIGN", GREEN_BR),
+            ("unlock", "WALLET", YELLOW),
+        ]
+        for name, label, color in screens:
+            btn = Button(
+                text=label,
+                background_normal="",
+                background_color=color if name == current else INPUT_BG,
+                color=TEXT,
+                bold=True,
+                font_size=dp(13),
+                size_hint_x=1,
+            )
+            btn.bind(on_release=lambda b, n=name: self._go(n))
+            self.add_widget(btn)
+
+    def _go(self, name):
+        app = App.get_running_app()
+        if name == "wallet" and not app.private_key:
+            app.sm.current = "unlock"
+        else:
+            app.sm.current = name
+
+
+# ── Screens ──────────────────────────────────────────────────
 
 class WelcomeScreen(Screen):
     def __init__(self, **kwargs):
@@ -267,6 +309,12 @@ class UnlockScreen(Screen):
         unlock_btn.bind(on_release=self.do_unlock)
         card.add_widget(unlock_btn)
         root.add_widget(card)
+
+        # always allow going to Check without unlocking
+        check_btn = BrandButton(text="CHECK ANY ADDRESS", bg_color=BLUE)
+        check_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "check"))
+        root.add_widget(check_btn)
+
         root.add_widget(Label())
         self.add_widget(root)
 
@@ -292,6 +340,120 @@ class UnlockScreen(Screen):
         address = address_from_private_key(privkey_hex)
         app.private_key = privkey_hex
         app.go_to_wallet_screen(address)
+
+
+class CheckScreen(Screen):
+    """Lookup Effective / Trust / Push for any address."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+
+        root.add_widget(TitleLabel(text="SOS 69069"))
+        root.add_widget(SubLabel(text="Check Presence", color=TEXT_MUTED))
+
+        card = Card()
+        self.addr_input = BrandInput(hint_text="0x address")
+        card.add_widget(self.addr_input)
+
+        row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
+        check_btn = BrandButton(text="CHECK", bg_color=BLUE)
+        check_btn.bind(on_release=self.do_check)
+        row.add_widget(check_btn)
+        mine_btn = BrandButton(text="MY ADDRESS", bg_color=INPUT_BG)
+        mine_btn.bind(on_release=self.use_mine)
+        row.add_widget(mine_btn)
+        card.add_widget(row)
+        root.add_widget(card)
+
+        # Metrics card
+        metrics = Card()
+        self.effective_lbl = Label(
+            text="Effective: —", color=BLUE_SOFT, bold=True,
+            font_size=dp(28), size_hint_y=None, height=dp(40),
+            halign="center",
+        )
+        self.effective_lbl.bind(size=lambda *a: setattr(self.effective_lbl, "text_size", self.effective_lbl.size))
+        metrics.add_widget(self.effective_lbl)
+
+        row2 = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(12))
+        self.trust_lbl = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(16), halign="center")
+        self.trust_lbl.bind(size=lambda *a: setattr(self.trust_lbl, "text_size", self.trust_lbl.size))
+        self.push_lbl = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(16),halign="center")
+        self.push_lbl.bind(size=lambda *a: setattr(self.push_lbl, "text_size", self.push_lbl.size))
+        row2.add_widget(self.trust_lbl)
+        row2.add_widget(self.push_lbl)
+        metrics.add_widget(row2)
+
+        self.status_lbl = SubLabel(text="", color=TEXT_MUTED)
+        metrics.add_widget(self.status_lbl)
+        root.add_widget(metrics)
+
+        root.add_widget(Label())  # spacer
+        root.add_widget(NavBar(current="check"))
+        self.add_widget(root)
+
+    def on_pre_enter(self, *args):
+        app = App.get_running_app()
+        # pre-fill with unlocked address or last known
+        if app.private_key:
+            try:
+                self.addr_input.text = address_from_private_key(app.private_key)
+            except Exception:
+                pass
+        elif not self.addr_input.text:
+            try:
+                self.addr_input.text = ws.peek_address(app.user_data_dir)
+            except Exception:
+                self.addr_input.text = "0x1C10e6574ee696f54b21A611a21313E4714628ad"
+
+    def use_mine(self, *_):
+        app = App.get_running_app()
+        if app.private_key:
+            self.addr_input.text = address_from_private_key(app.private_key)
+            self.do_check()
+            return
+        try:
+            addr = ws.peek_address(app.user_data_dir)
+            if addr:
+                self.addr_input.text = addr
+                self.do_check()
+                return
+        except Exception:
+            pass
+        show_popup("Info", "Unlock or create a wallet first.")
+
+    def do_check(self, *_):
+        addr = self.addr_input.text.strip()
+        if not (addr.startswith("0x") and len(addr) == 42):
+            show_popup("Error", "Enter a valid 0x address.")
+            return
+
+        self.status_lbl.text = "Loading…"
+        self.effective_lbl.text = "Effective: …"
+        self.trust_lbl.text = "Trust: …"
+        self.push_lbl.text = "Push: …"
+
+        def worker():
+            try:
+                stats = rpc.stats_of(addr)
+                Clock.schedule_once(lambda dt: self._show(stats, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._show(None, str(e)), 0)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show(self, stats, err):
+        if err:
+            self.status_lbl.text = err
+            self.effective_lbl.text = "Effective: —"
+            self.trust_lbl.text = "Trust: —"
+            self.push_lbl.text = "Push: —"
+            return
+        self.effective_lbl.text = f"Effective: {stats['effective']}"
+        self.trust_lbl.text = f"Trust: {stats['trust']}"
+        self.push_lbl.text = f"Push: {stats['push']}"
+        self.status_lbl.text = "Live on Ethereum Mainnet"
 
 
 class WalletScreen(Screen):
@@ -320,13 +482,12 @@ class WalletScreen(Screen):
         root.add_widget(card)
 
         self.result_label = Label(text="", color=GREEN_BR, font_size=dp(13),
-                                  size_hint_y=None, height=dp(120),
+                                  size_hint_y=None, height=dp(100),
                                   halign="left", valign="top")
         self.result_label.bind(size=lambda *a: setattr(self.result_label, "text_size", self.result_label.size))
         root.add_widget(self.result_label)
-        footer = SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED)
-        footer.font_size = dp(12)
-        root.add_widget(footer)
+
+        root.add_widget(NavBar(current="wallet"))
         self.add_widget(root)
 
     def on_pre_enter(self, *args):
@@ -369,7 +530,9 @@ class SOSApp(App):
         sm.add_widget(CreateWalletScreen(name="create"))
         sm.add_widget(ImportWalletScreen(name="import"))
         sm.add_widget(UnlockScreen(name="unlock"))
+        sm.add_widget(CheckScreen(name="check"))
         sm.add_widget(WalletScreen(name="wallet"))
+
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"
         else:
