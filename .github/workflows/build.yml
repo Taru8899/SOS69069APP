@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/pip-constraint.txt
     steps:
       - uses: actions/checkout@v4
 
