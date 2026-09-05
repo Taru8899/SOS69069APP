@@ -6,6 +6,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.image import Image
 from kivy.graphics import Color, RoundedRectangle
 from kivy.core.window import Window
 from kivy.metrics import dp
@@ -155,21 +156,83 @@ class SubLabel(Label):
         self.bind(size=lambda *a: setattr(self, "text_size", self.size))
 
 
+def _logo_path():
+    base = os.path.dirname(os.path.abspath(__file__))
+    for name in ("icon.png", "icon-192.png", "presplash.png"):
+        path = os.path.join(base, name)
+        if os.path.isfile(path):
+            return path
+    return "icon.png"
+
+
+class HeaderBar(BoxLayout):
+    """SOS logo top-left + title."""
+    def __init__(self, title="SOS 69069", **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = "horizontal"
+        self.size_hint_y = None
+        self.height = dp(44)
+        self.spacing = dp(10)
+        self.padding = [dp(4), dp(2)]
+        logo = Image(
+            source=_logo_path(),
+            size_hint=(None, None),
+            size=(dp(36), dp(36)),
+            allow_stretch=True,
+            keep_ratio=True,
+        )
+        self.add_widget(logo)
+        lbl = Label(
+            text=title,
+            color=TEXT,
+            bold=True,
+            font_size=dp(18),
+            halign="left",
+            valign="middle",
+            size_hint_x=1,
+        )
+        lbl.bind(size=lambda *a: setattr(lbl, "text_size", lbl.size))
+        self.add_widget(lbl)
+
+
 def show_popup(title, message):
-    content = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
-    msg = Label(text=message, color=TEXT, font_size=dp(13),
-                halign="center", valign="middle")
-    msg.bind(size=lambda *a: setattr(msg, "text_size", msg.size))
+    content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
+    msg = Label(
+        text=str(message),
+        color=TEXT,
+        font_size=dp(15),
+        halign="center",
+        valign="middle",
+        size_hint_y=None,
+        markup=False,
+    )
+    # Ensure label gets a real height from its texture
+    def _fit(*_):
+        msg.text_size = (msg.width, None)
+        msg.height = max(dp(60), msg.texture_size[1] + dp(8))
+    msg.bind(width=_fit, texture_size=_fit)
+    msg.height = dp(80)
     content.add_widget(msg)
     close = BrandButton(text="OK", bg_color=BLUE)
-    popup = Popup(title=title, title_color=TEXT, title_size=dp(15),
-                  content=content, size_hint=(0.9, 0.4),
-                  background="", separator_color=BORDER, auto_dismiss=True)
+    popup = Popup(
+        title=str(title),
+        title_color=TEXT,
+        title_size=dp(16),
+        title_align="center",
+        content=content,
+        size_hint=(0.92, None),
+        height=dp(260),
+        background="",
+        separator_color=BORDER,
+        auto_dismiss=True,
+    )
     with popup.canvas.before:
         Color(*CARD_BG)
         popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
-    popup.bind(pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
-               size=lambda *a: setattr(popup._bg, "size", popup.size))
+    popup.bind(
+        pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
+        size=lambda *a: setattr(popup._bg, "size", popup.size),
+    )
     close.bind(on_release=popup.dismiss)
     content.add_widget(close)
     popup.open()
@@ -183,12 +246,23 @@ def confirm_gas_then(callback, title="Confirm gas"):
         try:
             info = txmod.get_gas_price_info()
             gwei = info["gwei"]
-            msg = f"Network gas ~ {gwei:.2f} gwei\n(with 10% buffer)\n\nContinue?"
-            def show():
-                content = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
-                msg_l = Label(text=msg, color=TEXT, font_size=dp(14),
-                              halign="center", valign="middle")
-                msg_l.bind(size=lambda *a: setattr(msg_l, "text_size", msg_l.size))
+            msg = "Network gas ~ %.2f gwei\n(with 10%% buffer)\n\nContinue?" % gwei
+            def show(_dt=None):
+                content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
+                msg_l = Label(
+                    text=msg,
+                    color=TEXT,
+                    font_size=dp(16),
+                    bold=True,
+                    halign="center",
+                    valign="middle",
+                    size_hint_y=None,
+                )
+                def _fit(*_):
+                    msg_l.text_size = (msg_l.width, None)
+                    msg_l.height = max(dp(70), msg_l.texture_size[1] + dp(10))
+                msg_l.bind(width=_fit, texture_size=_fit)
+                msg_l.height = dp(90)
                 content.add_widget(msg_l)
                 row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
                 cancel = BrandButton(text="CANCEL", bg_color=INPUT_BG)
@@ -196,24 +270,36 @@ def confirm_gas_then(callback, title="Confirm gas"):
                 row.add_widget(cancel)
                 row.add_widget(ok)
                 content.add_widget(row)
-                popup = Popup(title=title, title_color=TEXT, title_size=dp(15),
-                              content=content, size_hint=(0.9, 0.42),
-                              background="", separator_color=BORDER, auto_dismiss=False)
+                popup = Popup(
+                    title=str(title),
+                    title_color=TEXT,
+                    title_size=dp(16),
+                    title_align="center",
+                    content=content,
+                    size_hint=(0.92, None),
+                    height=dp(280),
+                    background="",
+                    separator_color=BORDER,
+                    auto_dismiss=False,
+                )
                 with popup.canvas.before:
                     Color(*CARD_BG)
                     popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
-                popup.bind(pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
-                           size=lambda *a: setattr(popup._bg, "size", popup.size))
+                popup.bind(
+                    pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
+                    size=lambda *a: setattr(popup._bg, "size", popup.size),
+                )
                 cancel.bind(on_release=popup.dismiss)
                 def _ok(*_):
                     popup.dismiss()
                     callback()
                 ok.bind(on_release=_ok)
                 popup.open()
-            Clock.schedule_once(lambda dt: show(), 0)
+            Clock.schedule_once(show, 0)
         except Exception as e:
             Clock.schedule_once(lambda dt: show_popup("Gas check failed", str(e)), 0)
     threading.Thread(target=worker, daemon=True).start()
+
 
 
 class NavBar(BoxLayout):
@@ -261,7 +347,7 @@ class WelcomeScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(14))
-        root.add_widget(TitleLabel(text="SOS 69069"))
+        root.add_widget(HeaderBar(title="SOS 69069"))
         root.add_widget(SubLabel(text="Ethereum Mainnet", color=TEXT_MUTED))
         card = Card()
         card.add_widget(SubLabel(text="No wallet found on this device.", color=TEXT_SEC))
@@ -281,7 +367,7 @@ class CreateWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-        root.add_widget(TitleLabel(text="Create New Wallet"))
+        root.add_widget(HeaderBar(title="Create New Wallet"))
         card = Card()
         self.pw = BrandInput(hint_text="Set a password", password=True)
         self.cf = BrandInput(hint_text="Confirm password", password=True)
@@ -317,7 +403,7 @@ class ImportWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-        root.add_widget(TitleLabel(text="Import Wallet"))
+        root.add_widget(HeaderBar(title="Import Wallet"))
         card = Card()
         self.key = BrandInput(hint_text="Private key (0x...)")
         self.pw = BrandInput(hint_text="Set a password", password=True)
@@ -363,7 +449,7 @@ class UnlockScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-        root.add_widget(TitleLabel(text="Unlock Wallet"))
+        root.add_widget(HeaderBar(title="Unlock Wallet"))
         self.addr_lbl = SubLabel(text="", color=YELLOW)
         root.add_widget(self.addr_lbl)
         card = Card()
@@ -404,7 +490,7 @@ class CheckScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
-        root.add_widget(TitleLabel(text="SOS 69069"))
+        root.add_widget(HeaderBar(title="SOS 69069"))
         root.add_widget(SubLabel(text="Check Presence", color=TEXT_MUTED))
         card = Card()
         self.addr_input = BrandInput(hint_text="0x address")
@@ -498,7 +584,7 @@ class MessagesScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
-        root.add_widget(TitleLabel(text="Messages"))
+        root.add_widget(HeaderBar(title="Messages"))
         self.addr_input = BrandInput(hint_text="0x address to load messages")
         root.add_widget(self.addr_input)
 
@@ -641,7 +727,7 @@ class SignScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
-        root.add_widget(TitleLabel(text="Sign Presence"))
+        root.add_widget(HeaderBar(title="Sign Presence"))
         self.my_lbl = SubLabel(text="", color=YELLOW)
         root.add_widget(self.my_lbl)
 
@@ -776,7 +862,7 @@ class BatchScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
-        root.add_widget(TitleLabel(text="Batch Sign"))
+        root.add_widget(HeaderBar(title="Batch Sign"))
         root.add_widget(SubLabel(text="One address and one message per line", color=TEXT_MUTED))
 
         card = Card()
@@ -934,7 +1020,7 @@ class PresenceScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
-        root.add_widget(TitleLabel(text="Presence"))
+        root.add_widget(HeaderBar(title="Presence"))
 
         # Create offer card
         create = Card()
@@ -1191,7 +1277,7 @@ class LegacyScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        root.add_widget(TitleLabel(text="Legacy"))
+        root.add_widget(HeaderBar(title="Legacy"))
         root.add_widget(SubLabel(text="Claim by signing +1 to an old address", color=TEXT_MUTED))
 
         card = Card()
@@ -1347,7 +1433,7 @@ class GasScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        root.add_widget(TitleLabel(text="Gas Costs"))
+        root.add_widget(HeaderBar(title="Gas Costs"))
         root.add_widget(SubLabel(text="ETH spent on Push / Trust / Effective", color=TEXT_MUTED))
 
         card = Card()
@@ -1478,7 +1564,7 @@ class SignSubmitScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
-        root.add_widget(TitleLabel(text="Sign & Submit"))
+        root.add_widget(HeaderBar(title="Sign & Submit"))
         root.add_widget(SubLabel(text="1) Sign free  →  2) Submit pays gas", color=TEXT_MUTED))
 
         # SIGN panel
@@ -1647,7 +1733,7 @@ class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
-        root.add_widget(TitleLabel(text="Wallet"))
+        root.add_widget(HeaderBar(title="Wallet"))
         self.addr_lbl = SubLabel(text="", color=YELLOW)
         root.add_widget(self.addr_lbl)
         card = Card()
