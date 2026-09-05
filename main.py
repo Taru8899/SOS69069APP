@@ -166,16 +166,17 @@ def _logo_path():
 
 
 class HeaderBar(BoxLayout):
-    """SOS logo top-left + title. Content below should use same left padding."""
-    LEFT = dp(12)
+    """SOS logo top-left + title. Same inset on every page."""
+    LEFT = 12   # dp applied below
+    TOP = 8
 
     def __init__(self, title="SOS 69069", **kwargs):
         super().__init__(**kwargs)
         self.orientation = "horizontal"
         self.size_hint_y = None
-        self.height = dp(48)
+        self.height = dp(52)
         self.spacing = dp(10)
-        self.padding = [self.LEFT, dp(4), dp(8), dp(4)]
+        self.padding = [dp(HeaderBar.LEFT), dp(HeaderBar.TOP), dp(8), dp(4)]
         logo = Image(
             source=_logo_path(),
             size_hint=(None, None),
@@ -257,96 +258,127 @@ class PayerBar(BoxLayout):
         app.logout()
 
 
+
+class CopyableText(TextInput):
+    """Selectable / copyable text (read-only). Use instead of Label for any value user may copy."""
+    def __init__(self, text="", color=None, font_size=None, height=None, **kwargs):
+        kwargs.setdefault("multiline", True)
+        kwargs.setdefault("readonly", True)
+        kwargs.setdefault("background_normal", "")
+        kwargs.setdefault("background_active", "")
+        super().__init__(**kwargs)
+        self.text = text
+        self.background_color = (0, 0, 0, 0)
+        self.foreground_color = color or TEXT
+        self.cursor_color = BLUE_SOFT
+        self.font_size = font_size or dp(13)
+        self.size_hint_y = None
+        self.height = height or dp(40)
+        self.padding = [0, dp(4)]
+        self.write_tab = False
+
+
 def show_popup(title, message):
-    content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
-    msg = Label(
+    """Reliable popup: title + body as Labels inside content (always visible)."""
+    content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+    title_l = Label(
+        text=str(title),
+        color=YELLOW,
+        bold=True,
+        font_size=dp(17),
+        size_hint_y=None,
+        height=dp(28),
+        halign="center",
+        valign="middle",
+    )
+    title_l.bind(size=lambda *a: setattr(title_l, "text_size", title_l.size))
+    content.add_widget(title_l)
+
+    body = CopyableText(
         text=str(message),
         color=TEXT,
         font_size=dp(15),
-        halign="center",
-        valign="middle",
-        size_hint_y=None,
-        markup=False,
+        height=dp(110),
     )
-    # Ensure label gets a real height from its texture
-    def _fit(*_):
-        msg.text_size = (msg.width, None)
-        msg.height = max(dp(60), msg.texture_size[1] + dp(8))
-    msg.bind(width=_fit, texture_size=_fit)
-    msg.height = dp(80)
-    content.add_widget(msg)
+    content.add_widget(body)
+
     close = BrandButton(text="OK", bg_color=BLUE)
+    content.add_widget(close)
+
     popup = Popup(
-        title=str(title),
-        title_color=TEXT,
-        title_size=dp(16),
-        title_align="center",
+        title="",
+        separator_height=0,
         content=content,
         size_hint=(0.92, None),
-        height=dp(260),
+        height=dp(280),
         background="",
-        separator_color=BORDER,
         auto_dismiss=True,
     )
     with popup.canvas.before:
         Color(*CARD_BG)
-        popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
+        popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(14)])
     popup.bind(
         pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
         size=lambda *a: setattr(popup._bg, "size", popup.size),
     )
     close.bind(on_release=popup.dismiss)
-    content.add_widget(close)
     popup.open()
 
 
-
-
 def confirm_gas_then(callback, title="Confirm gas"):
-    """Fetch gas price, show confirm popup, call callback() if user accepts."""
+    """Fetch gas price, show confirm popup with visible text + buttons."""
     def worker():
         try:
             info = txmod.get_gas_price_info()
             gwei = info["gwei"]
-            msg = "Network gas ~ %.2f gwei\n(with 10%% buffer)\n\nContinue?" % gwei
+            msg = "Network gas ~ %.2f gwei\n(with 10%% buffer)\n\nContinue and send transaction?" % gwei
+
             def show(_dt=None):
-                content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
-                msg_l = Label(
+                content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+                title_l = Label(
+                    text=str(title),
+                    color=YELLOW,
+                    bold=True,
+                    font_size=dp(17),
+                    size_hint_y=None,
+                    height=dp(28),
+                    halign="center",
+                )
+                title_l.bind(size=lambda *a: setattr(title_l, "text_size", title_l.size))
+                content.add_widget(title_l)
+
+                body = Label(
                     text=msg,
                     color=TEXT,
-                    font_size=dp(16),
+                    font_size=dp(15),
                     bold=True,
                     halign="center",
                     valign="middle",
                     size_hint_y=None,
+                    height=dp(100),
                 )
-                def _fit(*_):
-                    msg_l.text_size = (msg_l.width, None)
-                    msg_l.height = max(dp(70), msg_l.texture_size[1] + dp(10))
-                msg_l.bind(width=_fit, texture_size=_fit)
-                msg_l.height = dp(90)
-                content.add_widget(msg_l)
+                body.bind(size=lambda *a: setattr(body, "text_size", body.size))
+                content.add_widget(body)
+
                 row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
                 cancel = BrandButton(text="CANCEL", bg_color=INPUT_BG)
                 ok = BrandButton(text="CONTINUE", bg_color=GREEN)
                 row.add_widget(cancel)
                 row.add_widget(ok)
                 content.add_widget(row)
+
                 popup = Popup(
-                    title=str(title),
-                    title_color=TEXT,
-                    title_size=dp(16),
-                    title_align="center",
+                    title="",
+                    separator_height=0,
                     content=content,
                     size_hint=(0.92, None),
-                    height=dp(280),
+                    height=dp(260),
                     background="",
-                    separator_color=BORDER,
                     auto_dismiss=False,
                 )
                 with popup.canvas.before:
                     Color(*CARD_BG)
-                    popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
+                    popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(14)])
                 popup.bind(
                     pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
                     size=lambda *a: setattr(popup._bg, "size", popup.size),
@@ -357,11 +389,11 @@ def confirm_gas_then(callback, title="Confirm gas"):
                     callback()
                 ok.bind(on_release=_ok)
                 popup.open()
+
             Clock.schedule_once(show, 0)
         except Exception as e:
             Clock.schedule_once(lambda dt: show_popup("Gas check failed", str(e)), 0)
     threading.Thread(target=worker, daemon=True).start()
-
 
 
 class NavBar(BoxLayout):
@@ -522,7 +554,7 @@ class ImportWalletScreen(Screen):
 class UnlockScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=[HeaderBar.LEFT, dp(12), dp(12), dp(8)], spacing=dp(8))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(8))
         root.add_widget(HeaderBar(title="Unlock Wallet"))
         self.slots_lbl = SubLabel(text="", color=TEXT_MUTED)
         self.slots_lbl.halign = "left"
@@ -626,6 +658,19 @@ class CheckScreen(Screen):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
         root.add_widget(HeaderBar(title="SOS 69069"))
+        motto = Label(
+            text="SOS 69069 originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
+            color=TEXT,
+            bold=True,
+            font_size=dp(14),
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            height=dp(72),
+        )
+        motto.bind(size=lambda *a: setattr(motto, "text_size", motto.size))
+        motto.padding_x = dp(HeaderBar.LEFT)
+        root.add_widget(motto)
         root.add_widget(SubLabel(text="Check Presence", color=TEXT_MUTED))
         card = Card()
         self.addr_input = BrandInput(hint_text="0x address")
@@ -893,10 +938,7 @@ class SignScreen(Screen):
         card.add_widget(btn_row)
         root.add_widget(card)
 
-        self.result = Label(text="", color=GREEN_BR, font_size=dp(12),
-                            size_hint_y=None, height=dp(100),
-                            halign="left", valign="top")
-        self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
+        self.result = CopyableText(text="", color=GREEN_BR, font_size=dp(12), height=dp(100))
         root.add_widget(self.result)
         root.add_widget(NavBar(current="sign"))
         self.add_widget(root)
@@ -1705,55 +1747,48 @@ class GasScreen(Screen):
 
 
 
+
 class SignSubmitScreen(Screen):
     """
-    Split flow (like sign-submit.html):
-      1) SIGN with the local wallet (free, offline EIP-712)
-      2) Copy JSON payload
-      3) SUBMIT later with any wallet that pays gas
-    For mobile we keep one local key: Sign produces payload;
-    Submit broadcasts it (same or after re-unlock).
+    Split flow: sign offline, submit with gas wallet.
+    Address field: up to 200 lines (use 1 or 2).
+    Metadata field: up to 200 lines (use 1 or 2) — must match address count.
     """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(6))
         root.add_widget(HeaderBar(title="Sign & Submit"))
-        root.add_widget(SubLabel(text="1) Sign free  →  2) Submit pays gas", color=TEXT_MUTED))
+        self.payer_bar = PayerBar()
+        root.add_widget(self.payer_bar)
+        root.add_widget(SubLabel(text="1–2 lines used · fields hold up to 200", color=TEXT_MUTED))
 
-        # SIGN panel
         sign_card = Card()
-        sign_card.add_widget(SubLabel(text="Step 1 — Sign (no gas)", color=YELLOW))
-        self.ss_to = BrandInput(hint_text="intendedTo (0x...)")
-        self.ss_to.text = "0x1C10e6574ee696f54b21A611a21313E4714628ad"
-        sign_card.add_widget(self.ss_to)
-        self.ss_meta = BrandInput(hint_text="Metadata (max 64 chars)")
-        sign_card.add_widget(self.ss_meta)
-        self.ss_count = SubLabel(text="0/64", color=TEXT_MUTED)
-        sign_card.add_widget(self.ss_count)
-        self.ss_meta.bind(text=lambda *a: setattr(
-            self.ss_count, "text",
-            f"{utf8_len(self.ss_meta.text)}/64"
-        ))
-        sbtn = BrandButton(text="SIGN PAYLOAD", bg_color=BLUE)
+        sign_card.add_widget(SubLabel(text="Addresses (1 or 2 lines)", color=YELLOW))
+        self.ss_addrs = MultiInput(hint_text="0xabc...\n0xdef...")
+        self.ss_addrs.height = dp(70)
+        sign_card.add_widget(self.ss_addrs)
+        sign_card.add_widget(SubLabel(text="Metadata messages (1 or 2 lines)", color=YELLOW))
+        self.ss_metas = MultiInput(hint_text="message one\nmessage two")
+        self.ss_metas.height = dp(70)
+        sign_card.add_widget(self.ss_metas)
+        sbtn = BrandButton(text="SIGN PAYLOAD(S)", bg_color=BLUE)
         sbtn.bind(on_release=self.do_ss_sign)
         sign_card.add_widget(sbtn)
         root.add_widget(sign_card)
 
-        self.payload_box = Label(
-            text="Signed payload JSON will appear here",
-            color=GREEN_BR, font_size=dp(11),
-            size_hint_y=None, height=dp(90),
-            halign="left", valign="top",
+        self.payload_box = CopyableText(
+            text="Signed payload JSON will appear here — long-press to select & copy",
+            color=GREEN_BR,
+            font_size=dp(11),
+            height=dp(90),
         )
-        self.payload_box.bind(size=lambda *a: setattr(self.payload_box, "text_size", self.payload_box.size))
         root.add_widget(self.payload_box)
 
-        # SUBMIT panel
         sub_card = Card()
-        sub_card.add_widget(SubLabel(text="Step 2 — Submit (pays gas)", color=ORANGE))
-        self.ss_paste = MultiInput(hint_text="Paste signed payload JSON here")
-        self.ss_paste.height = dp(80)
+        sub_card.add_widget(SubLabel(text="Step 2 — Paste payload(s) & submit", color=ORANGE))
+        self.ss_paste = MultiInput(hint_text="Paste signed payload JSON (or JSON array)")
+        self.ss_paste.height = dp(72)
         sub_card.add_widget(self.ss_paste)
         row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
         loadb = BrandButton(text="LOAD", bg_color=INPUT_BG)
@@ -1763,130 +1798,171 @@ class SignSubmitScreen(Screen):
         row.add_widget(loadb)
         row.add_widget(sendb)
         sub_card.add_widget(row)
-        self.ss_status = SubLabel(text="", color=TEXT_MUTED)
+        self.ss_status = CopyableText(text="", color=TEXT_MUTED, height=dp(36))
         sub_card.add_widget(self.ss_status)
         root.add_widget(sub_card)
 
         root.add_widget(NavBar(current="ss"))
         self.add_widget(root)
-        self._payload = None
+        self._payloads = []
 
     def on_pre_enter(self, *a):
-        app = App.get_running_app()
-        if app.private_key and not self.ss_to.text:
-            pass  # keep default recipient
+        if hasattr(self, "payer_bar"):
+            self.payer_bar.refresh()
+
+    def _parse_lines(self, text, max_lines=200):
+        lines = [x.strip() for x in text.splitlines() if x.strip()]
+        if len(lines) > max_lines:
+            raise ValueError(f"Max {max_lines} lines")
+        return lines
 
     def do_ss_sign(self, *_):
         app = App.get_running_app()
-        if not app.private_key:
-            show_popup("Error", "Unlock wallet first to sign.")
+        signer_key = app.get_signer_key()
+        if not signer_key:
+            show_popup("Error", "Unlock a wallet first to sign.")
             self.manager.current = "unlock"
             return
-        to = self.ss_to.text.strip()
-        meta = self.ss_meta.text.strip()
-        if not (to.startswith("0x") and len(to) == 42):
-            show_popup("Error", "Invalid intendedTo address.")
+        try:
+            addrs = self._parse_lines(self.ss_addrs.text)
+            metas = self._parse_lines(self.ss_metas.text)
+        except ValueError as e:
+            show_popup("Error", str(e))
             return
-        if not meta:
-            show_popup("Error", "Metadata required.")
+        if not addrs or not metas:
+            show_popup("Error", "Enter at least one address and one metadata line.")
             return
-        if utf8_len(meta) > 64:
-            show_popup("Error", "Metadata exceeds 64 characters.")
+        if len(addrs) != len(metas):
+            show_popup("Error", f"Line count mismatch: {len(addrs)} addresses vs {len(metas)} messages.")
             return
+        if len(addrs) > 2:
+            show_popup("Error", "Submit 1 or 2 pairs only (fields accept up to 200 lines for pasting).")
+            return
+        for a in addrs:
+            if not (a.startswith("0x") and len(a) == 42):
+                show_popup("Error", f"Invalid address: {a[:16]}…")
+                return
+        for m in metas:
+            if utf8_len(m) > 64:
+                show_popup("Error", "Each metadata line max 64 characters.")
+                return
+
         self.ss_status.text = "Signing…"
-        payload_hash = "0x" + os.urandom(32).hex()
 
         def worker():
             try:
-                result = sign_record(app.private_key, CHAIN_ID, to, payload_hash, meta)
                 import json
-                blob = {
-                    "signer": result["signer"],
-                    "intendedTo": to,
-                    "payloadHash": payload_hash,
-                    "metadata": meta,
-                    "signature": result["signature"],
-                    "chainId": str(CHAIN_ID),
-                    "contract": CONTRACT_ADDRESS,
-                }
-                Clock.schedule_once(lambda dt: self._signed(blob, None), 0)
+                blobs = []
+                for to, meta in zip(addrs, metas):
+                    payload_hash = "0x" + os.urandom(32).hex()
+                    result = sign_record(signer_key, CHAIN_ID, to, payload_hash, meta)
+                    blobs.append({
+                        "signer": result["signer"],
+                        "intendedTo": to,
+                        "payloadHash": payload_hash,
+                        "metadata": meta,
+                        "signature": result["signature"],
+                        "chainId": str(CHAIN_ID),
+                        "contract": CONTRACT_ADDRESS,
+                    })
+                Clock.schedule_once(lambda dt: self._signed(blobs, None), 0)
             except Exception as e:
                 Clock.schedule_once(lambda dt: self._signed(None, str(e)), 0)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _signed(self, blob, err):
+    def _signed(self, blobs, err):
         if err:
             self.ss_status.text = err
             show_popup("Error", err)
             return
-        self._payload = blob
         import json
-        raw = json.dumps(blob, indent=2)
+        self._payloads = blobs
+        raw = json.dumps(blobs if len(blobs) > 1 else blobs[0], indent=2)
         self.payload_box.text = raw
         self.ss_paste.text = raw
-        self.ss_status.text = "Signed — payload ready. Submit when ready."
-        show_popup("Signed", "Payload created.\nNo transaction was sent.")
+        self.ss_status.text = f"Signed {len(blobs)} payload(s). Long-press JSON to copy."
+        show_popup("Signed", f"Created {len(blobs)} payload(s).\nNo transaction was sent.\nLong-press the JSON to copy.")
 
     def load_payload(self, *_):
         import json
         try:
-            blob = json.loads(self.ss_paste.text.strip())
-            for k in ("signer", "intendedTo", "payloadHash", "signature", "metadata"):
-                if k not in blob:
-                    raise ValueError(f"Missing field: {k}")
-            self._payload = blob
-            self.ss_status.text = "Payload loaded — ready to submit"
-            show_popup("Loaded", "Payload OK.")
+            raw = self.ss_paste.text.strip()
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                data = [data]
+            if not isinstance(data, list) or not data:
+                raise ValueError("Expect JSON object or array")
+            if len(data) > 2:
+                raise ValueError("Max 2 payloads to submit at once")
+            for blob in data:
+                for k in ("signer", "intendedTo", "payloadHash", "signature", "metadata"):
+                    if k not in blob:
+                        raise ValueError(f"Missing field: {k}")
+            self._payloads = data
+            self.ss_status.text = f"Loaded {len(data)} payload(s) — ready to submit"
+            show_popup("Loaded", f"{len(data)} payload(s) OK.")
         except Exception as e:
-            self._payload = None
+            self._payloads = []
             show_popup("Error", f"Invalid payload: {e}")
 
     def do_ss_submit(self, *_):
         app = App.get_running_app()
-        if not app.private_key:
-            show_popup("Error", "Unlock the submitting wallet first.")
+        payer_key = app.get_payer_key()
+        if not payer_key:
+            show_popup("Error", "Unlock the gas-payer wallet first.")
             self.manager.current = "unlock"
             return
-        if not self._payload:
+        if not self._payloads:
             self.load_payload()
-            if not self._payload:
+            if not self._payloads:
                 return
-        blob = self._payload
+        blobs = list(self._payloads)
 
         def start():
             self.ss_status.text = "Submitting…"
             def worker():
                 try:
-                    txr = txmod.send_record_signature(
-                        app.private_key,
-                        blob["intendedTo"],
-                        blob["payloadHash"],
-                        blob["signature"],
-                        blob["metadata"],
-                        signer=blob.get("signer"),
-                    )
-                    Clock.schedule_once(lambda dt: self._submitted(txr, None), 0)
+                    from pure_crypto import pubkey_to_address, privkey_to_pubkey
+                    pk = int(payer_key.replace("0x", ""), 16)
+                    from_addr = pubkey_to_address(privkey_to_pubkey(pk))
+                    nonce = txmod.get_nonce(from_addr)
+                    gas_price = txmod.get_gas_price()
+                    hashes = []
+                    for blob in blobs:
+                        txr = txmod.send_record_signature(
+                            payer_key,
+                            blob["intendedTo"],
+                            blob["payloadHash"],
+                            blob["signature"],
+                            blob["metadata"],
+                            signer=blob.get("signer"),
+                            nonce=nonce,
+                            gas_price=gas_price,
+                        )
+                        hashes.append(txr["txHash"])
+                        nonce = txr["nonce"] + 1
+                    Clock.schedule_once(lambda dt: self._submitted(hashes, None), 0)
                 except Exception as e:
                     Clock.schedule_once(lambda dt: self._submitted(None, str(e)), 0)
             threading.Thread(target=worker, daemon=True).start()
 
         confirm_gas_then(start, title="Confirm submit")
 
-    def _submitted(self, txr, err):
+    def _submitted(self, hashes, err):
         if err:
             self.ss_status.text = err
             show_popup("Error", err)
             return
-        self.ss_status.text = f"Submitted {txr['txHash'][:20]}…"
-        show_popup("Submitted", "On-chain: " + txr["txHash"][:28] + "…")
-
+        text = "\\n".join(hashes)
+        self.ss_status.text = text
+        show_popup("Submitted", f"{len(hashes)} tx(s) on-chain:\\n" + "\\n".join(h[:28] + "…" for h in hashes))
 
 
 
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=[HeaderBar.LEFT, dp(12), dp(12), dp(8)], spacing=dp(10))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(10))
         root.add_widget(HeaderBar(title="Wallets"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
