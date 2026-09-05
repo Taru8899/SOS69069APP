@@ -1,16 +1,6 @@
 """
-Password-encrypted private key storage. Pure stdlib only (hashlib, hmac,
-os, json) — no C-extension dependencies, so this stays safe for
-python-for-android cross-compilation.
-
-Design: PBKDF2-HMAC-SHA256 derives two separate keys from the user's
-password (one for encryption, one for authentication — never reuse a
-single key for both). Encryption is HMAC-SHA256 used as a counter-mode
-keystream generator (a standard, sound construction — this is exactly
-how many stream ciphers built from a PRF work). Encrypt-then-MAC:
-the authentication tag is computed over the ciphertext, so a wrong
-password or tampered file is detected before any decrypted bytes
-are trusted.
+Password-encrypted private key storage. Supports up to 2 wallet slots.
+Pure stdlib only — safe for python-for-android.
 """
 
 import os
@@ -22,6 +12,7 @@ import base64
 PBKDF2_ITERATIONS = 200_000
 SALT_LEN = 16
 NONCE_LEN = 16
+MAX_SLOTS = 2
 
 
 def _pbkdf2(password: str, salt: bytes, length: int) -> bytes:
@@ -29,11 +20,8 @@ def _pbkdf2(password: str, salt: bytes, length: int) -> bytes:
 
 
 def _derive_keys(password: str, salt: bytes):
-    # 64 bytes total -> 32 for encryption key, 32 for MAC key
     material = _pbkdf2(password, salt, 64)
-    enc_key = material[:32]
-    mac_key = material[32:]
-    return enc_key, mac_key
+    return material[:32], material[32:]
 
 
 def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
@@ -54,12 +42,8 @@ def encrypt(plaintext: bytes, password: str) -> dict:
     salt = os.urandom(SALT_LEN)
     nonce = os.urandom(NONCE_LEN)
     enc_key, mac_key = _derive_keys(password, salt)
-
-    keystream = _keystream(enc_key, nonce, len(plaintext))
-    ciphertext = _xor(plaintext, keystream)
-
+    ciphertext = _xor(plaintext, _keystream(enc_key, nonce, len(plaintext)))
     tag = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
-
     return {
         "salt": base64.b64encode(salt).decode(),
         "nonce": base64.b64encode(nonce).decode(),
@@ -77,50 +61,88 @@ def decrypt(blob: dict, password: str) -> bytes:
     nonce = base64.b64decode(blob["nonce"])
     ciphertext = base64.b64decode(blob["ciphertext"])
     tag = base64.b64decode(blob["tag"])
-
     enc_key, mac_key = _derive_keys(password, salt)
-
     expected_tag = hmac.new(mac_key, nonce + ciphertext, hashlib.sha256).digest()
     if not hmac.compare_digest(tag, expected_tag):
         raise WrongPasswordOrTampered("Wrong password or corrupted wallet file.")
-
-    keystream = _keystream(enc_key, nonce, len(ciphertext))
-    return _xor(ciphertext, keystream)
+    return _xor(ciphertext, _keystream(enc_key, nonce, len(ciphertext)))
 
 
-# ---------------- wallet file management ----------------
+def _slot_path(app_data_dir: str, slot: int) -> str:
+    if slot == 1:
+        # legacy single-wallet file stays slot 1
+        legacy = os.path.join(app_data_dir, "wallet.json")
+        if os.path.isfile(legacy):
+            return legacy
+    return os.path.join(app_data_dir, f"wallet_{slot}.json")
+
 
 def wallet_file_path(app_data_dir: str) -> str:
-    return os.path.join(app_data_dir, "wallet.json")
+    return _slot_path(app_data_dir, 1)
 
 
-def wallet_exists(app_data_dir: str) -> bool:
-    return os.path.isfile(wallet_file_path(app_data_dir))
+def wallet_exists(app_data_dir: str, slot: int = None) -> bool:
+    if slot is not None:
+        return os.path.isfile(_slot_path(app_data_dir, slot))
+    return any(os.path.isfile(_slot_path(app_data_dir, s)) for s in (1, 2))
 
 
-def save_wallet(app_data_dir: str, privkey_hex: str, address: str, password: str):
+def list_slots(app_data_dir: str) -> list:
+    """Return list of {slot, address} for existing wallets."""
+    out = []
+    for s in (1, 2):
+        path = _slot_path(app_data_dir, s)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r") as f:
+                blob = json.load(f)
+            out.append({"slot": s, "address": blob.get("address", "")})
+        except Exception:
+            out.append({"slot": s, "address": ""})
+    return out
+
+
+def save_wallet(app_data_dir: str, privkey_hex: str, address: str, password: str, slot: int = 1):
+    if slot not in (1, 2):
+        raise ValueError("slot must be 1 or 2")
     plaintext = privkey_hex.encode()
     blob = encrypt(plaintext, password)
-    blob["address"] = address  # address itself isn't secret, stored openly for display
-
-    path = wallet_file_path(app_data_dir)
+    blob["address"] = address
+    blob["slot"] = slot
+    path = _slot_path(app_data_dir, slot)
+    # prefer wallet_N.json naming for new saves
+    if slot == 1 and path.endswith("wallet.json"):
+        path = os.path.join(app_data_dir, "wallet_1.json")
     with open(path, "w") as f:
         json.dump(blob, f)
+    # migrate away from legacy name if both would exist
+    legacy = os.path.join(app_data_dir, "wallet.json")
+    if slot == 1 and os.path.isfile(legacy) and path != legacy:
+        try:
+            os.remove(legacy)
+        except Exception:
+            pass
 
 
-def load_wallet(app_data_dir: str, password: str) -> str:
-    """Returns the decrypted private key hex string, or raises
-    WrongPasswordOrTampered."""
-    path = wallet_file_path(app_data_dir)
+def load_wallet(app_data_dir: str, password: str, slot: int = 1) -> str:
+    path = _slot_path(app_data_dir, slot)
     with open(path, "r") as f:
         blob = json.load(f)
-    plaintext = decrypt(blob, password)
-    return plaintext.decode()
+    return decrypt(blob, password).decode()
 
 
-def peek_address(app_data_dir: str) -> str:
-    """Read the (non-secret) address without needing the password."""
-    path = wallet_file_path(app_data_dir)
+def peek_address(app_data_dir: str, slot: int = 1) -> str:
+    path = _slot_path(app_data_dir, slot)
     with open(path, "r") as f:
         blob = json.load(f)
     return blob.get("address", "")
+
+
+def delete_wallet(app_data_dir: str, slot: int):
+    for path in (
+        os.path.join(app_data_dir, f"wallet_{slot}.json"),
+        os.path.join(app_data_dir, "wallet.json") if slot == 1 else None,
+    ):
+        if path and os.path.isfile(path):
+            os.remove(path)

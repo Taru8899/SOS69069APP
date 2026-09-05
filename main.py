@@ -72,7 +72,7 @@ class Card(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.orientation = "vertical"
-        self.padding = [dp(16), dp(12)]
+        self.padding = [dp(12), dp(12)]
         self.spacing = dp(8)
         self.size_hint_y = None
         self.bind(minimum_height=self.setter("height"))
@@ -166,18 +166,20 @@ def _logo_path():
 
 
 class HeaderBar(BoxLayout):
-    """SOS logo top-left + title."""
+    """SOS logo top-left + title. Content below should use same left padding."""
+    LEFT = dp(12)
+
     def __init__(self, title="SOS 69069", **kwargs):
         super().__init__(**kwargs)
         self.orientation = "horizontal"
         self.size_hint_y = None
-        self.height = dp(44)
+        self.height = dp(48)
         self.spacing = dp(10)
-        self.padding = [dp(4), dp(2)]
+        self.padding = [self.LEFT, dp(4), dp(8), dp(4)]
         logo = Image(
             source=_logo_path(),
             size_hint=(None, None),
-            size=(dp(36), dp(36)),
+            size=(dp(40), dp(40)),
             allow_stretch=True,
             keep_ratio=True,
         )
@@ -193,6 +195,66 @@ class HeaderBar(BoxLayout):
         )
         lbl.bind(size=lambda *a: setattr(lbl, "text_size", lbl.size))
         self.add_widget(lbl)
+
+
+class PayerBar(BoxLayout):
+    """Shows which unlocked wallet pays gas + logout."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = "vertical"
+        self.size_hint_y = None
+        self.height = dp(52)
+        self.spacing = dp(2)
+        self.padding = [HeaderBar.LEFT, 0, dp(8), 0]
+        self.addr_lbl = Label(
+            text="Gas payer: —",
+            color=YELLOW,
+            font_size=dp(12),
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(20),
+        )
+        self.addr_lbl.bind(size=lambda *a: setattr(self.addr_lbl, "text_size", self.addr_lbl.size))
+        self.add_widget(self.addr_lbl)
+        row = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(6))
+        self.pick_btn = Button(
+            text="Switch payer", background_normal="", background_color=INPUT_BG,
+            color=TEXT, font_size=dp(11), bold=True, size_hint_x=0.55,
+        )
+        self.pick_btn.bind(on_release=self._cycle_payer)
+        self.logout_btn = Button(
+            text="LOGOUT", background_normal="", background_color=DANGER,
+            color=TEXT, font_size=dp(11), bold=True, size_hint_x=0.45,
+        )
+        self.logout_btn.bind(on_release=self._logout)
+        row.add_widget(self.pick_btn)
+        row.add_widget(self.logout_btn)
+        self.add_widget(row)
+        Clock.schedule_once(lambda dt: self.refresh(), 0)
+
+    def refresh(self):
+        app = App.get_running_app()
+        payer = app.get_payer_key()
+        if payer:
+            try:
+                self.addr_lbl.text = "Gas payer: " + address_from_private_key(payer)
+            except Exception:
+                self.addr_lbl.text = "Gas payer: (error)"
+        else:
+            self.addr_lbl.text = "Gas payer: (locked — unlock a wallet)"
+        n = sum(1 for k in (app.keys or {}).values() if k)
+        self.pick_btn.disabled = n < 2
+        self.pick_btn.opacity = 1 if n >= 2 else 0.4
+
+    def _cycle_payer(self, *_):
+        app = App.get_running_app()
+        app.cycle_payer_slot()
+        self.refresh()
+
+    def _logout(self, *_):
+        app = App.get_running_app()
+        app.logout()
 
 
 def show_popup(title, message):
@@ -393,9 +455,13 @@ class CreateWalletScreen(Screen):
         priv = "0x" + os.urandom(32).hex()
         addr = address_from_private_key(priv)
         app = App.get_running_app()
-        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text)
-        show_popup("Wallet Created", f"Address:\n{addr}\n\nBack up this device securely.")
-        app.private_key = priv
+        slot = 1 if not ws.wallet_exists(app.user_data_dir, 1) else 2
+        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text, slot=slot)
+        show_popup("Wallet Created", f"Saved to slot {slot}.\n{addr}\n\nBack up this device securely.")
+        if app.keys is None:
+            app.keys = {1: None, 2: None}
+        app.keys[slot] = priv
+        app.payer_slot = slot
         app.go_to_wallet_screen(addr)
 
 
@@ -439,51 +505,120 @@ class ImportWalletScreen(Screen):
             show_popup("Error", "Invalid private key format.")
             return
         app = App.get_running_app()
-        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text)
-        show_popup("Wallet Imported", f"Address:\n{addr}")
-        app.private_key = priv
+        slot = 1 if not ws.wallet_exists(app.user_data_dir, 1) else 2
+        if ws.wallet_exists(app.user_data_dir, 1) and ws.wallet_exists(app.user_data_dir, 2):
+            show_popup("Error", "Both wallet slots are full. Logout and remove one first.")
+            return
+        slot = 1 if not ws.wallet_exists(app.user_data_dir, 1) else 2
+        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text, slot=slot)
+        show_popup("Wallet Imported", f"Saved to slot {slot}.\n{addr}")
+        if app.keys is None:
+            app.keys = {1: None, 2: None}
+        app.keys[slot] = priv
+        app.payer_slot = slot
         app.go_to_wallet_screen(addr)
 
 
 class UnlockScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
+        root = BoxLayout(orientation="vertical", padding=[HeaderBar.LEFT, dp(12), dp(12), dp(8)], spacing=dp(8))
         root.add_widget(HeaderBar(title="Unlock Wallet"))
-        self.addr_lbl = SubLabel(text="", color=YELLOW)
-        root.add_widget(self.addr_lbl)
+        self.slots_lbl = SubLabel(text="", color=TEXT_MUTED)
+        self.slots_lbl.halign = "left"
+        root.add_widget(self.slots_lbl)
+
         card = Card()
+        self.slot_btn = BrandButton(text="Slot 1", bg_color=BLUE)
+        self.slot_btn.bind(on_release=self.toggle_slot)
+        card.add_widget(self.slot_btn)
+        self.addr_lbl = SubLabel(text="", color=YELLOW)
+        self.addr_lbl.halign = "left"
+        card.add_widget(self.addr_lbl)
         self.pw = BrandInput(hint_text="Password", password=True)
         card.add_widget(self.pw)
-        btn = BrandButton(text="UNLOCK", bg_color=GREEN)
+        btn = BrandButton(text="UNLOCK THIS SLOT", bg_color=GREEN)
         btn.bind(on_release=self.do_unlock)
         card.add_widget(btn)
         root.add_widget(card)
-        chk = BrandButton(text="CHECK / MESSAGES (no unlock)", bg_color=BLUE)
+
+        self.status = SubLabel(text="", color=TEXT_SEC)
+        self.status.halign = "left"
+        root.add_widget(self.status)
+
+        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        go = BrandButton(text="CONTINUE", bg_color=BLUE_SOFT)
+        go.bind(on_release=lambda *_: setattr(self.manager, "current", "sign"))
+        chk = BrandButton(text="CHECK", bg_color=INPUT_BG)
         chk.bind(on_release=lambda *_: setattr(self.manager, "current", "check"))
-        root.add_widget(chk)
+        row.add_widget(go)
+        row.add_widget(chk)
+        root.add_widget(row)
+
+        add = BrandButton(text="ADD / IMPORT 2nd WALLET", bg_color=INPUT_BG)
+        add.bind(on_release=lambda *_: setattr(self.manager, "current", "import"))
+        root.add_widget(add)
+
         root.add_widget(Label())
+        root.add_widget(NavBar(current="wallet"))
         self.add_widget(root)
+        self.active_slot = 1
+
+    def toggle_slot(self, *_):
+        self.active_slot = 2 if self.active_slot == 1 else 1
+        self._refresh_slot_ui()
+
+    def _refresh_slot_ui(self):
+        app = App.get_running_app()
+        self.slot_btn.text = f"Slot {self.active_slot} (tap to switch)"
+        try:
+            addr = ws.peek_address(app.user_data_dir, self.active_slot)
+            self.addr_lbl.text = addr if addr else "(empty slot — import a key)"
+        except Exception:
+            self.addr_lbl.text = "(empty slot — import a key)"
+        unlocked = []
+        for s in (1, 2):
+            if app.keys and app.keys.get(s):
+                unlocked.append(f"S{s}")
+        self.slots_lbl.text = "Unlocked: " + (", ".join(unlocked) if unlocked else "none")
+        if app.get_payer_key():
+            try:
+                self.status.text = "Gas payer: " + address_from_private_key(app.get_payer_key())
+            except Exception:
+                self.status.text = ""
+        else:
+            self.status.text = "Unlock at least one slot to send txs"
 
     def on_pre_enter(self, *a):
         app = App.get_running_app()
-        try:
-            self.addr_lbl.text = "Wallet: " + ws.peek_address(app.user_data_dir)
-        except Exception:
-            self.addr_lbl.text = ""
+        slots = ws.list_slots(app.user_data_dir)
+        if not slots:
+            self.manager.current = "welcome"
+            return
+        self.active_slot = slots[0]["slot"]
+        self._refresh_slot_ui()
 
     def do_unlock(self, *_):
         app = App.get_running_app()
+        if not ws.wallet_exists(app.user_data_dir, self.active_slot):
+            show_popup("Empty", "This slot is empty. Import a wallet into it.")
+            return
         try:
-            priv = ws.load_wallet(app.user_data_dir, self.pw.text)
+            priv = ws.load_wallet(app.user_data_dir, self.pw.text, self.active_slot)
         except ws.WrongPasswordOrTampered:
             show_popup("Error", "Wrong password.")
             return
         except Exception as e:
             show_popup("Error", str(e))
             return
-        app.private_key = priv
-        app.go_to_wallet_screen(address_from_private_key(priv))
+        if app.keys is None:
+            app.keys = {1: None, 2: None}
+        app.keys[self.active_slot] = priv
+        app.payer_slot = self.active_slot
+        self.pw.text = ""
+        self._refresh_slot_ui()
+        show_popup("Unlocked", f"Slot {self.active_slot} unlocked.\nGas payer set to this wallet.")
+
 
 
 class CheckScreen(Screen):
@@ -728,7 +863,10 @@ class SignScreen(Screen):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
         root.add_widget(HeaderBar(title="Sign Presence"))
+        self.payer_bar = PayerBar()
+        root.add_widget(self.payer_bar)
         self.my_lbl = SubLabel(text="", color=YELLOW)
+        self.my_lbl.halign = "left"
         root.add_widget(self.my_lbl)
 
         card = Card()
@@ -765,8 +903,14 @@ class SignScreen(Screen):
 
     def on_pre_enter(self, *a):
         app = App.get_running_app()
-        if app.private_key:
-            self.my_lbl.text = "You: " + address_from_private_key(app.private_key)
+        if hasattr(self, "payer_bar"):
+            self.payer_bar.refresh()
+        signer = app.get_signer_key()
+        payer = app.get_payer_key()
+        if signer:
+            self.my_lbl.text = "Signer: " + address_from_private_key(signer)
+        else:
+            self.my_lbl.text = "Signer: (locked)"
         if getattr(app, "reply_code", None):
             self.code.text = app.reply_code
             app.reply_code = None
@@ -785,8 +929,8 @@ class SignScreen(Screen):
 
     def _prepare(self):
         app = App.get_running_app()
-        if not app.private_key:
-            show_popup("Error", "Wallet is locked.")
+        if not app.get_signer_key():
+            show_popup("Error", "Unlock a wallet first.")
             return None
         to = self.recipient.text.strip()
         payload = self.payload.text.strip() or ("0x" + os.urandom(32).hex())
@@ -816,14 +960,19 @@ class SignScreen(Screen):
 
         def start():
             self.result.text = "Signing…" if not send else "Signing & sending…"
+            signer_key = app.get_signer_key()
+            payer_key = app.get_payer_key() or signer_key
             def worker():
                 try:
-                    result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                    result = sign_record(signer_key, CHAIN_ID, to, payload, meta)
                     if not send:
                         Clock.schedule_once(lambda dt: self._done_sign(result, meta, None), 0)
                         return
+                    if not payer_key:
+                        raise RuntimeError("No gas-payer wallet unlocked")
                     txr = txmod.send_record_signature(
-                        app.private_key, to, payload, result["signature"], meta
+                        payer_key, to, payload, result["signature"], meta,
+                        signer=result.get("signer"),
                     )
                     Clock.schedule_once(lambda dt: self._done_send(result, meta, txr, None), 0)
                 except Exception as e:
@@ -863,6 +1012,8 @@ class BatchScreen(Screen):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
         root.add_widget(HeaderBar(title="Batch Sign"))
+        self.payer_bar = PayerBar()
+        root.add_widget(self.payer_bar)
         root.add_widget(SubLabel(text="One address and one message per line", color=TEXT_MUTED))
 
         card = Card()
@@ -946,8 +1097,8 @@ class BatchScreen(Screen):
 
     def run_batch(self, send=False):
         app = App.get_running_app()
-        if not app.private_key:
-            show_popup("Error", "Wallet is locked.")
+        if not app.get_signer_key():
+            show_popup("Error", "Unlock a wallet first.")
             return
         if not self.pairs:
             show_popup("Error", "Load pairs first.")
@@ -959,6 +1110,8 @@ class BatchScreen(Screen):
             self.sign_btn.disabled = True
             self.send_btn.disabled = True
             self.result.text = "Sending…" if send else "Signing…"
+            signer_key = app.get_signer_key()
+            payer_key = app.get_payer_key() or signer_key
 
             def worker():
                 out = []
@@ -967,21 +1120,22 @@ class BatchScreen(Screen):
                     gas_price = None
                     if send:
                         from pure_crypto import pubkey_to_address, privkey_to_pubkey
-                        pk = int(app.private_key.replace("0x", ""), 16)
+                        pk = int(payer_key.replace("0x", ""), 16)
                         from_addr = pubkey_to_address(privkey_to_pubkey(pk))
                         nonce = txmod.get_nonce(from_addr)
                         gas_price = txmod.get_gas_price()
                     for i, (to, meta) in enumerate(self.pairs):
                         payload = "0x" + os.urandom(32).hex()
-                        r = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                        r = sign_record(signer_key, CHAIN_ID, to, payload, meta)
                         entry = {"to": to, "metadata": meta, "signature": r["signature"], "payload": payload}
                         if send:
                             txr = txmod.send_record_signature(
-                                app.private_key, to, payload, r["signature"], meta,
+                                payer_key, to, payload, r["signature"], meta,
+                                signer=r.get("signer"),
                                 nonce=nonce, gas_price=gas_price,
                             )
                             entry["txHash"] = txr["txHash"]
-                            nonce = txr["nonce"] + 1  # next tx
+                            nonce = txr["nonce"] + 1
                         out.append(entry)
                     Clock.schedule_once(lambda dt: self._done(out, send, None), 0)
                 except Exception as e:
@@ -1732,14 +1886,22 @@ class SignSubmitScreen(Screen):
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
-        root.add_widget(HeaderBar(title="Wallet"))
-        self.addr_lbl = SubLabel(text="", color=YELLOW)
-        root.add_widget(self.addr_lbl)
+        root = BoxLayout(orientation="vertical", padding=[HeaderBar.LEFT, dp(12), dp(12), dp(8)], spacing=dp(10))
+        root.add_widget(HeaderBar(title="Wallets"))
+        self.payer_bar = PayerBar()
+        root.add_widget(self.payer_bar)
+        self.info = Label(text="", color=TEXT_SEC, font_size=dp(13),
+                          size_hint_y=None, height=dp(120),
+                          halign="left", valign="top")
+        self.info.bind(size=lambda *a: setattr(self.info, "text_size", self.info.size))
+        root.add_widget(self.info)
         card = Card()
-        lock = BrandButton(text="LOCK WALLET", bg_color=INPUT_BG)
-        lock.bind(on_release=self.do_lock)
-        card.add_widget(lock)
+        unlock = BrandButton(text="MANAGE / UNLOCK SLOTS", bg_color=BLUE)
+        unlock.bind(on_release=lambda *_: setattr(self.manager, "current", "unlock"))
+        card.add_widget(unlock)
+        logout = BrandButton(text="LOGOUT ALL", bg_color=DANGER)
+        logout.bind(on_release=lambda *_: App.get_running_app().logout())
+        card.add_widget(logout)
         root.add_widget(card)
         root.add_widget(Label())
         root.add_widget(NavBar(current="wallet"))
@@ -1747,23 +1909,74 @@ class WalletScreen(Screen):
 
     def on_pre_enter(self, *a):
         app = App.get_running_app()
-        if app.private_key:
-            self.addr_lbl.text = address_from_private_key(app.private_key)
+        self.payer_bar.refresh()
+        lines = []
+        for s in (1, 2):
+            try:
+                addr = ws.peek_address(app.user_data_dir, s)
+            except Exception:
+                addr = None
+            st = "unlocked" if app.keys and app.keys.get(s) else ("saved" if addr else "empty")
+            payer = " ← gas payer" if app.payer_slot == s and app.keys and app.keys.get(s) else ""
+            lines.append(f"Slot {s}: {st}{payer}")
+            if addr:
+                lines.append(f"  {addr}")
+        self.info.text = "\n".join(lines)
 
-    def do_lock(self, *_):
-        app = App.get_running_app()
-        app.private_key = None
-        self.manager.current = "unlock"
 
 
 class SOSApp(App):
-    private_key = None
+    # keys: {1: priv_hex or None, 2: priv_hex or None}
+    keys = None
+    payer_slot = 1
     last_check_address = None
     reply_code = None
     reply_to = None
     last_batch_results = None
 
+    @property
+    def private_key(self):
+        """Back-compat: primary unlocked key (signer preference = payer or first)."""
+        if not self.keys:
+            return None
+        return self.get_payer_key() or self.keys.get(1) or self.keys.get(2)
+
+    @private_key.setter
+    def private_key(self, value):
+        if self.keys is None:
+            self.keys = {1: None, 2: None}
+        if value is None:
+            self.keys = {1: None, 2: None}
+            return
+        # set into current payer slot
+        self.keys[self.payer_slot] = value
+
+    def get_payer_key(self):
+        if not self.keys:
+            return None
+        return self.keys.get(self.payer_slot) or self.keys.get(1) or self.keys.get(2)
+
+    def get_signer_key(self):
+        """Prefer slot 1 for EIP-712 signing if both unlocked, else any."""
+        if not self.keys:
+            return None
+        return self.keys.get(1) or self.keys.get(2) or self.get_payer_key()
+
+    def cycle_payer_slot(self):
+        if not self.keys:
+            return
+        other = 2 if self.payer_slot == 1 else 1
+        if self.keys.get(other):
+            self.payer_slot = other
+
+    def logout(self):
+        self.keys = {1: None, 2: None}
+        self.payer_slot = 1
+        if getattr(self, "sm", None):
+            self.sm.current = "unlock"
+
     def build(self):
+
         os.makedirs(self.user_data_dir, exist_ok=True)
         sm = ScreenManager()
         sm.add_widget(WelcomeScreen(name="welcome"))
