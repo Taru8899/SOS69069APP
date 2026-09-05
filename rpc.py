@@ -1,9 +1,14 @@
 """
-Minimal JSON-RPC helper for Ethereum view calls + event logs.
+JSON-RPC + Etherscan helper for Ethereum view calls and event logs.
 Pure requests + pure_crypto. No web3.py.
 """
 import requests
 from pure_crypto import keccak256
+
+# ── Config ───────────────────────────────────────────────────
+ETHERSCAN_API_KEY = "RU99NEJZV9F2EWS7A97RWVHDJN1ZQ29Q99"
+ETHERSCAN_BASE = "https://api.etherscan.io/v2/api"
+CHAIN_ID = 1
 
 RPC_LIST = [
     "https://eth.drpc.org",
@@ -36,19 +41,28 @@ def _selector(sig: str) -> bytes:
 
 
 def _topic_address(addr: str) -> str:
-    """Indexed address topic (32-byte left-padded)."""
     return "0x" + _encode_address(addr).hex()
 
+
+def _decode_uint256(data: bytes, offset: int = 0) -> int:
+    return int.from_bytes(data[offset:offset + 32], "big")
+
+
+def _decode_int256(data: bytes, offset: int = 0) -> int:
+    raw = int.from_bytes(data[offset:offset + 32], "big")
+    if raw >= 2**255:
+        raw -= 2**256
+    return raw
+
+
+# ── Low-level RPC ────────────────────────────────────────────
 
 def _eth_call(to: str, data: bytes, rpc_url: str, timeout: float = 10.0) -> bytes:
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "eth_call",
-        "params": [
-            {"to": to, "data": "0x" + data.hex()},
-            "latest",
-        ],
+        "params": [{"to": to, "data": "0x" + data.hex()}, "latest"],
     }
     r = requests.post(rpc_url, json=payload, timeout=timeout)
     r.raise_for_status()
@@ -85,17 +99,6 @@ def _eth_block_number(rpc_url: str, timeout: float = 8.0) -> int:
     return int(body["result"], 16)
 
 
-def _decode_uint256(data: bytes, offset: int = 0) -> int:
-    return int.from_bytes(data[offset:offset + 32], "big")
-
-
-def _decode_int256(data: bytes, offset: int = 0) -> int:
-    raw = int.from_bytes(data[offset:offset + 32], "big")
-    if raw >= 2**255:
-        raw -= 2**256
-    return raw
-
-
 def call_with_fallback(fn):
     last_err = None
     for url in RPC_LIST:
@@ -106,6 +109,59 @@ def call_with_fallback(fn):
             continue
     raise RuntimeError(f"All RPCs failed. Last: {last_err}")
 
+
+# ── Etherscan helpers ────────────────────────────────────────
+
+def _etherscan_get(params: dict, timeout: float = 15.0) -> dict:
+    params = dict(params)
+    params["chainid"] = CHAIN_ID
+    params["apikey"] = ETHERSCAN_API_KEY
+    r = requests.get(ETHERSCAN_BASE, params=params, timeout=timeout)
+    r.raise_for_status()
+    body = r.json()
+    # status "1" = ok, "0" can still contain useful data (e.g. no results)
+    return body
+
+
+def etherscan_get_logs(address: str, topic0: str, topic1=None, topic2=None,
+                       from_block: int = 0, to_block: str | int = "latest",
+                       page: int = 1, offset: int = 100) -> list:
+    """
+    Fetch event logs via Etherscan V2 API.
+    topic1/topic2 can be full 32-byte topics or None.
+    """
+    params = {
+        "module": "logs",
+        "action": "getLogs",
+        "address": address,
+        "fromBlock": from_block if isinstance(from_block, int) else from_block,
+        "toBlock": to_block,
+        "topic0": topic0,
+        "page": page,
+        "offset": offset,
+    }
+    if topic1 is not None:
+        params["topic1"] = topic1
+        params["topic0_1_opr"] = "and"
+    if topic2 is not None:
+        params["topic2"] = topic2
+        params["topic0_2_opr"] = "and"
+        if topic1 is not None:
+            params["topic1_2_opr"] = "and"
+
+    body = _etherscan_get(params)
+    if body.get("status") == "1" and isinstance(body.get("result"), list):
+        return body["result"]
+    # No results or soft error
+    if isinstance(body.get("result"), list):
+        return body["result"]
+    msg = body.get("message") or body.get("result") or "Etherscan error"
+    if "no records" in str(msg).lower() or "no logs" in str(msg).lower():
+        return []
+    raise RuntimeError(str(msg))
+
+
+# ── High-level API ───────────────────────────────────────────
 
 def stats_of(address: str) -> dict:
     """Return {"push": int, "trust": int, "effective": int}"""
@@ -128,19 +184,10 @@ def stats_of(address: str) -> dict:
     return call_with_fallback(_do)
 
 
-def _decode_abi_string(data: bytes, offset: int) -> str:
-    """Decode a dynamic string from ABI-encoded data at the given offset."""
-    str_offset = _decode_uint256(data, offset)
-    length = _decode_uint256(data, str_offset)
-    start = str_offset + 32
-    return data[start:start + length].decode("utf-8", errors="replace")
-
-
 def _parse_signature_recorded(log: dict) -> dict | None:
     """
-    Parse a SignatureRecorded log into a friendly dict.
+    Parse a SignatureRecorded log (RPC or Etherscan format).
     topics: [topic0, signer, intendedTo, submitter]
-    data: payloadHash (32) + signature offset + timestamp (32) + metadata offset...
     """
     try:
         topics = log.get("topics", [])
@@ -150,22 +197,34 @@ def _parse_signature_recorded(log: dict) -> dict | None:
         intended_to = "0x" + topics[2][-40:]
         submitter = "0x" + topics[3][-40:]
 
-        data_hex = log.get("data", "0x")[2:]
+        data_hex = log.get("data", "0x")
+        if data_hex.startswith("0x"):
+            data_hex = data_hex[2:]
         data = bytes.fromhex(data_hex)
 
-        # static: payloadHash (0), offset_sig (32), timestamp (64), offset_meta (96)
         payload_hash = "0x" + data[0:32].hex()
         timestamp = _decode_uint256(data, 64)
 
-        # signature is dynamic bytes
         sig_offset = _decode_uint256(data, 32)
         sig_len = _decode_uint256(data, sig_offset)
         signature = "0x" + data[sig_offset + 32:sig_offset + 32 + sig_len].hex()
 
-        # metadata is dynamic string
         meta_offset = _decode_uint256(data, 96)
         meta_len = _decode_uint256(data, meta_offset)
         metadata = data[meta_offset + 32:meta_offset + 32 + meta_len].decode("utf-8", errors="replace")
+
+        tx_hash = log.get("transactionHash") or log.get("hash") or ""
+        block_num = log.get("blockNumber", "0x0")
+        if isinstance(block_num, str):
+            block_num = int(block_num, 16) if block_num.startswith("0x") else int(block_num)
+        log_index = log.get("logIndex", "0x0")
+        if isinstance(log_index, str):
+            log_index = int(log_index, 16) if str(log_index).startswith("0x") else int(log_index)
+
+        # Etherscan sometimes returns timeStamp in the log
+        if not timestamp and log.get("timeStamp"):
+            ts = log["timeStamp"]
+            timestamp = int(ts, 16) if isinstance(ts, str) and ts.startswith("0x") else int(ts)
 
         return {
             "signer": signer,
@@ -175,39 +234,69 @@ def _parse_signature_recorded(log: dict) -> dict | None:
             "signature": signature,
             "timestamp": timestamp,
             "metadata": metadata,
-            "txHash": log.get("transactionHash", ""),
-            "blockNumber": int(log.get("blockNumber", "0x0"), 16),
-            "logIndex": int(log.get("logIndex", "0x0"), 16),
+            "txHash": tx_hash,
+            "blockNumber": block_num,
+            "logIndex": log_index,
         }
     except Exception:
         return None
 
 
-def fetch_messages(address: str, direction: str = "trust", lookback_blocks: int = 8000, max_results: int = 15) -> list:
-    """
-    direction: "trust" = intendedTo == address (received)
-               "push"  = signer == address (sent)
-    Returns list of parsed events, newest first, metadata non-empty only.
-    """
-    address = address.strip().lower()
-    if not (address.startswith("0x") and len(address) == 42):
-        raise ValueError("Invalid address")
+def _fetch_via_etherscan(address: str, direction: str, max_results: int) -> list:
+    """Prefer Etherscan for reliability and deeper history."""
+    address = address.lower()
+    topic_addr = _topic_address(address)
+
+    if direction == "trust":
+        # intendedTo = topic2
+        logs = etherscan_get_logs(
+            CONTRACT, EVENT_TOPIC0,
+            topic1=None, topic2=topic_addr,
+            from_block=0, to_block="latest",
+            page=1, offset=min(max_results * 3, 200),
+        )
+    else:
+        # signer = topic1
+        logs = etherscan_get_logs(
+            CONTRACT, EVENT_TOPIC0,
+            topic1=topic_addr, topic2=None,
+            from_block=0, to_block="latest",
+            page=1, offset=min(max_results * 3, 200),
+        )
+
+    parsed = []
+    seen = set()
+    for log in logs:
+        ev = _parse_signature_recorded(log)
+        if not ev:
+            continue
+        meta = (ev.get("metadata") or "").strip()
+        if not meta:
+            continue
+        key = (ev["txHash"], ev["logIndex"])
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append(ev)
+
+    parsed.sort(key=lambda e: (e["timestamp"], e["blockNumber"]), reverse=True)
+    return parsed[:max_results]
+
+
+def _fetch_via_rpc(address: str, direction: str, lookback_blocks: int, max_results: int) -> list:
+    address = address.lower()
 
     def _do(rpc_url):
         latest = _eth_block_number(rpc_url)
         from_block = max(0, latest - lookback_blocks)
 
-        # Build filter
         topics = [EVENT_TOPIC0]
         if direction == "trust":
-            # signer = any, intendedTo = address
             topics.append(None)
             topics.append(_topic_address(address))
         else:
-            # signer = address
             topics.append(_topic_address(address))
 
-        # Query in chunks to avoid RPC limits
         chunk = 2500
         all_logs = []
         start = from_block
@@ -223,7 +312,6 @@ def fetch_messages(address: str, direction: str = "trust", lookback_blocks: int 
                 logs = _eth_get_logs(params, rpc_url)
                 all_logs.extend(logs)
             except Exception:
-                # try smaller chunk
                 mid = (start + end) // 2
                 if mid > start:
                     for a, b in [(start, mid), (mid + 1, end)]:
@@ -254,3 +342,26 @@ def fetch_messages(address: str, direction: str = "trust", lookback_blocks: int 
         return parsed[:max_results]
 
     return call_with_fallback(_do)
+
+
+def fetch_messages(address: str, direction: str = "trust",
+                   lookback_blocks: int = 12000, max_results: int = 15) -> list:
+    """
+    direction: "trust" = intendedTo == address (received)
+               "push"  = signer == address (sent)
+    Tries Etherscan first (deeper history), falls back to public RPCs.
+    """
+    address = address.strip()
+    if not (address.startswith("0x") and len(address) == 42):
+        raise ValueError("Invalid address")
+
+    # 1) Prefer Etherscan
+    try:
+        results = _fetch_via_etherscan(address, direction, max_results)
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # 2) Fallback to public RPCs
+    return _fetch_via_rpc(address, direction, lookback_blocks, max_results)
