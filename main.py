@@ -5,21 +5,25 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.graphics import Color, RoundedRectangle
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
 from kivy.clock import Clock
 import os
+import re
 import threading
+from datetime import datetime
 
 from sos_core import sign_record, address_from_private_key, CONTRACT_ADDRESS
 import wallet_storage as ws
 import rpc
 
 CHAIN_ID = 1
+MAX_META = 64
 
-# Brand colors from style.css
+# Brand colors
 BG          = get_color_from_hex("#0a0e0b")
 CARD_BG     = get_color_from_hex("#141b16")
 INPUT_BG    = get_color_from_hex("#232f27")
@@ -38,17 +42,41 @@ DANGER      = get_color_from_hex("#ef4444")
 Window.clearcolor = BG
 
 
+def utf8_len(s: str) -> int:
+    return len(s.encode("utf-8"))
+
+
+def extract_conv_code(metadata: str):
+    m = re.search(r"(?:^|\s)([a-fA-F0-9]{8})$", (metadata or "").strip())
+    return m.group(1).lower() if m else None
+
+
+def short_addr(a: str) -> str:
+    if not a or len(a) < 12:
+        return a or "—"
+    return a[:6] + "…" + a[-4:]
+
+
+def fmt_time(ts: int) -> str:
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
+# ── Widgets ──────────────────────────────────────────────────
+
 class Card(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.orientation = "vertical"
-        self.padding = [dp(18), dp(14)]
-        self.spacing = dp(10)
+        self.padding = [dp(16), dp(12)]
+        self.spacing = dp(8)
         self.size_hint_y = None
         self.bind(minimum_height=self.setter("height"))
         with self.canvas.before:
             Color(*CARD_BG)
-            self._bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+            self._bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(14)])
         self.bind(pos=self._upd, size=self._upd)
 
     def _upd(self, *a):
@@ -61,28 +89,44 @@ class BrandButton(Button):
         super().__init__(**kwargs)
         self.text = text
         self.size_hint_y = None
-        self.height = dp(52)
+        self.height = dp(48)
         self.background_normal = ""
         self.background_color = bg_color or BLUE
         self.color = TEXT
         self.bold = True
-        self.font_size = dp(16)
+        self.font_size = dp(15)
 
 
 class BrandInput(TextInput):
     def __init__(self, **kwargs):
+        kwargs.setdefault("multiline", False)
         super().__init__(**kwargs)
         self.size_hint_y = None
-        self.height = dp(48)
+        self.height = dp(46)
         self.background_normal = ""
         self.background_active = ""
         self.background_color = INPUT_BG
         self.foreground_color = TEXT
         self.cursor_color = BLUE_SOFT
-        self.padding = [dp(14), dp(12)]
-        self.font_size = dp(15)
-        self.multiline = False
+        self.padding = [dp(12), dp(12)]
+        self.font_size = dp(14)
         self.write_tab = False
+
+
+class MultiInput(TextInput):
+    """Multi-line input for batch addresses / messages."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.multiline = True
+        self.size_hint_y = None
+        self.height = dp(110)
+        self.background_normal = ""
+        self.background_active = ""
+        self.background_color = INPUT_BG
+        self.foreground_color = TEXT
+        self.cursor_color = BLUE_SOFT
+        self.padding = [dp(10), dp(8)]
+        self.font_size = dp(13)
 
 
 class TitleLabel(Label):
@@ -91,9 +135,9 @@ class TitleLabel(Label):
         self.text = text
         self.color = TEXT
         self.bold = True
-        self.font_size = dp(22)
+        self.font_size = dp(20)
         self.size_hint_y = None
-        self.height = dp(36)
+        self.height = dp(32)
         self.halign = "center"
         self.bind(size=lambda *a: setattr(self, "text_size", self.size))
 
@@ -103,22 +147,22 @@ class SubLabel(Label):
         super().__init__(**kwargs)
         self.text = text
         self.color = color or TEXT_SEC
-        self.font_size = dp(14)
+        self.font_size = dp(13)
         self.size_hint_y = None
-        self.height = dp(28)
+        self.height = dp(24)
         self.halign = "center"
         self.bind(size=lambda *a: setattr(self, "text_size", self.size))
 
 
 def show_popup(title, message):
-    content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
-    msg = Label(text=message, color=TEXT, font_size=dp(14),
+    content = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
+    msg = Label(text=message, color=TEXT, font_size=dp(13),
                 halign="center", valign="middle")
     msg.bind(size=lambda *a: setattr(msg, "text_size", msg.size))
     content.add_widget(msg)
     close = BrandButton(text="OK", bg_color=BLUE)
-    popup = Popup(title=title, title_color=TEXT, title_size=dp(16),
-                  content=content, size_hint=(0.88, 0.38),
+    popup = Popup(title=title, title_color=TEXT, title_size=dp(15),
+                  content=content, size_hint=(0.9, 0.4),
                   background="", separator_color=BORDER, auto_dismiss=True)
     with popup.canvas.before:
         Color(*CARD_BG)
@@ -130,39 +174,36 @@ def show_popup(title, message):
     popup.open()
 
 
-# ── Navigation bar ───────────────────────────────────────────
-
 class NavBar(BoxLayout):
     def __init__(self, current="", **kwargs):
         super().__init__(**kwargs)
         self.orientation = "horizontal"
         self.size_hint_y = None
-        self.height = dp(48)
-        self.spacing = dp(6)
-        self.padding = [dp(4), 0]
-
-        screens = [
+        self.height = dp(46)
+        self.spacing = dp(4)
+        self.padding = [dp(2), 0]
+        items = [
             ("check", "CHECK", BLUE_SOFT),
-            ("wallet", "SIGN", GREEN_BR),
-            ("unlock", "WALLET", YELLOW),
+            ("messages", "MSGS", GREEN_BR),
+            ("sign", "SIGN", ORANGE),
+            ("batch", "BATCH", YELLOW),
+            ("wallet", "KEY", TEXT_MUTED),
         ]
-        for name, label, color in screens:
+        for name, label, color in items:
             btn = Button(
-                text=label,
-                background_normal="",
+                text=label, background_normal="",
                 background_color=color if name == current else INPUT_BG,
-                color=TEXT,
-                bold=True,
-                font_size=dp(13),
-                size_hint_x=1,
+                color=TEXT, bold=True, font_size=dp(12), size_hint_x=1,
             )
             btn.bind(on_release=lambda b, n=name: self._go(n))
             self.add_widget(btn)
 
     def _go(self, name):
         app = App.get_running_app()
-        if name == "wallet" and not app.private_key:
+        if name in ("sign", "batch") and not app.private_key:
             app.sm.current = "unlock"
+        elif name == "wallet":
+            app.sm.current = "unlock" if not app.private_key else "wallet"
         else:
             app.sm.current = name
 
@@ -172,235 +213,189 @@ class NavBar(BoxLayout):
 class WelcomeScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(16))
-        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(90), spacing=dp(4))
-        header.add_widget(TitleLabel(text="SOS 69069"))
-        header.add_widget(SubLabel(text="Ethereum Mainnet", color=TEXT_MUTED))
-        root.add_widget(header)
-
+        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(14))
+        root.add_widget(TitleLabel(text="SOS 69069"))
+        root.add_widget(SubLabel(text="Ethereum Mainnet", color=TEXT_MUTED))
         card = Card()
         card.add_widget(SubLabel(text="No wallet found on this device.", color=TEXT_SEC))
-        card.add_widget(Label(size_hint_y=None, height=dp(8)))
         create_btn = BrandButton(text="CREATE NEW WALLET", bg_color=GREEN)
-        create_btn.bind(on_release=self.go_create)
+        create_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "create"))
         card.add_widget(create_btn)
         import_btn = BrandButton(text="IMPORT EXISTING KEY", bg_color=BLUE)
-        import_btn.bind(on_release=self.go_import)
+        import_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "import"))
         card.add_widget(import_btn)
         root.add_widget(card)
         root.add_widget(Label())
-        footer = SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED)
-        footer.font_size = dp(12)
-        root.add_widget(footer)
+        root.add_widget(SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED))
         self.add_widget(root)
-
-    def go_create(self, *_):
-        self.manager.current = "create"
-
-    def go_import(self, *_):
-        self.manager.current = "import"
 
 
 class CreateWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
         root.add_widget(TitleLabel(text="Create New Wallet"))
-        hint = SubLabel(text="A new private key will be generated on this device.\nSet a password to encrypt it locally.", color=TEXT_SEC)
-        hint.height = dp(50)
-        root.add_widget(hint)
-
         card = Card()
-        self.password_input = BrandInput(hint_text="Set a password", password=True)
-        card.add_widget(self.password_input)
-        self.confirm_input = BrandInput(hint_text="Confirm password", password=True)
-        card.add_widget(self.confirm_input)
-        create_btn = BrandButton(text="GENERATE & SAVE", bg_color=GREEN)
-        create_btn.bind(on_release=self.do_create)
-        card.add_widget(create_btn)
-        back_btn = BrandButton(text="BACK", bg_color=INPUT_BG)
-        back_btn.bind(on_release=self.go_back)
-        card.add_widget(back_btn)
+        self.pw = BrandInput(hint_text="Set a password", password=True)
+        self.cf = BrandInput(hint_text="Confirm password", password=True)
+        card.add_widget(self.pw)
+        card.add_widget(self.cf)
+        btn = BrandButton(text="GENERATE & SAVE", bg_color=GREEN)
+        btn.bind(on_release=self.do_create)
+        card.add_widget(btn)
+        back = BrandButton(text="BACK", bg_color=INPUT_BG)
+        back.bind(on_release=lambda *_: setattr(self.manager, "current", "welcome"))
+        card.add_widget(back)
         root.add_widget(card)
         root.add_widget(Label())
         self.add_widget(root)
 
-    def go_back(self, *_):
-        self.manager.current = "welcome"
-
     def do_create(self, *_):
-        pw = self.password_input.text
-        confirm = self.confirm_input.text
-        if len(pw) < 8:
+        if len(self.pw.text) < 8:
             show_popup("Error", "Password must be at least 8 characters.")
             return
-        if pw != confirm:
+        if self.pw.text != self.cf.text:
             show_popup("Error", "Passwords do not match.")
             return
-        privkey_hex = "0x" + os.urandom(32).hex()
-        address = address_from_private_key(privkey_hex)
+        priv = "0x" + os.urandom(32).hex()
+        addr = address_from_private_key(priv)
         app = App.get_running_app()
-        ws.save_wallet(app.user_data_dir, privkey_hex, address, pw)
-        show_popup("Wallet Created", f"Address:\n{address}\n\nBack up this device securely.")
-        app.go_to_wallet_screen(address)
+        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text)
+        show_popup("Wallet Created", f"Address:\n{addr}\n\nBack up this device securely.")
+        app.private_key = priv
+        app.go_to_wallet_screen(addr)
 
 
 class ImportWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
         root.add_widget(TitleLabel(text="Import Wallet"))
         card = Card()
-        self.privkey_input = BrandInput(hint_text="Private key (0x...)")
-        card.add_widget(self.privkey_input)
-        self.password_input = BrandInput(hint_text="Set a password", password=True)
-        card.add_widget(self.password_input)
-        self.confirm_input = BrandInput(hint_text="Confirm password", password=True)
-        card.add_widget(self.confirm_input)
-        import_btn = BrandButton(text="IMPORT & SAVE", bg_color=GREEN)
-        import_btn.bind(on_release=self.do_import)
-        card.add_widget(import_btn)
-        back_btn = BrandButton(text="BACK", bg_color=INPUT_BG)
-        back_btn.bind(on_release=self.go_back)
-        card.add_widget(back_btn)
+        self.key = BrandInput(hint_text="Private key (0x...)")
+        self.pw = BrandInput(hint_text="Set a password", password=True)
+        self.cf = BrandInput(hint_text="Confirm password", password=True)
+        card.add_widget(self.key)
+        card.add_widget(self.pw)
+        card.add_widget(self.cf)
+        btn = BrandButton(text="IMPORT & SAVE", bg_color=GREEN)
+        btn.bind(on_release=self.do_import)
+        card.add_widget(btn)
+        back = BrandButton(text="BACK", bg_color=INPUT_BG)
+        back.bind(on_release=lambda *_: setattr(self.manager, "current", "welcome"))
+        card.add_widget(back)
         root.add_widget(card)
         root.add_widget(Label())
         self.add_widget(root)
 
-    def go_back(self, *_):
-        self.manager.current = "welcome"
-
     def do_import(self, *_):
-        raw = self.privkey_input.text.strip()
-        pw = self.password_input.text
-        confirm = self.confirm_input.text
-        if len(pw) < 8:
+        if len(self.pw.text) < 8:
             show_popup("Error", "Password must be at least 8 characters.")
             return
-        if pw != confirm:
+        if self.pw.text != self.cf.text:
             show_popup("Error", "Passwords do not match.")
             return
         try:
-            privkey_int = int(raw.replace("0x", ""), 16)
-            if not (0 < privkey_int < 2**256):
+            raw = self.key.text.strip().replace("0x", "")
+            n = int(raw, 16)
+            if not (0 < n < 2**256):
                 raise ValueError()
-            privkey_hex = "0x" + raw.replace("0x", "").zfill(64)
-            address = address_from_private_key(privkey_hex)
+            priv = "0x" + raw.zfill(64)
+            addr = address_from_private_key(priv)
         except Exception:
             show_popup("Error", "Invalid private key format.")
             return
         app = App.get_running_app()
-        ws.save_wallet(app.user_data_dir, privkey_hex, address, pw)
-        show_popup("Wallet Imported", f"Address:\n{address}")
-        app.go_to_wallet_screen(address)
+        ws.save_wallet(app.user_data_dir, priv, addr, self.pw.text)
+        show_popup("Wallet Imported", f"Address:\n{addr}")
+        app.private_key = priv
+        app.go_to_wallet_screen(addr)
 
 
 class UnlockScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
         root.add_widget(TitleLabel(text="Unlock Wallet"))
-        self.address_label = SubLabel(text="", color=YELLOW)
-        root.add_widget(self.address_label)
+        self.addr_lbl = SubLabel(text="", color=YELLOW)
+        root.add_widget(self.addr_lbl)
         card = Card()
-        self.password_input = BrandInput(hint_text="Password", password=True)
-        card.add_widget(self.password_input)
-        unlock_btn = BrandButton(text="UNLOCK", bg_color=GREEN)
-        unlock_btn.bind(on_release=self.do_unlock)
-        card.add_widget(unlock_btn)
+        self.pw = BrandInput(hint_text="Password", password=True)
+        card.add_widget(self.pw)
+        btn = BrandButton(text="UNLOCK", bg_color=GREEN)
+        btn.bind(on_release=self.do_unlock)
+        card.add_widget(btn)
         root.add_widget(card)
-
-        # always allow going to Check without unlocking
-        check_btn = BrandButton(text="CHECK ANY ADDRESS", bg_color=BLUE)
-        check_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "check"))
-        root.add_widget(check_btn)
-
+        chk = BrandButton(text="CHECK / MESSAGES (no unlock)", bg_color=BLUE)
+        chk.bind(on_release=lambda *_: setattr(self.manager, "current", "check"))
+        root.add_widget(chk)
         root.add_widget(Label())
         self.add_widget(root)
 
-    def on_pre_enter(self, *args):
+    def on_pre_enter(self, *a):
         app = App.get_running_app()
         try:
-            addr = ws.peek_address(app.user_data_dir)
-            self.address_label.text = f"Wallet: {addr}"
+            self.addr_lbl.text = "Wallet: " + ws.peek_address(app.user_data_dir)
         except Exception:
-            self.address_label.text = ""
+            self.addr_lbl.text = ""
 
     def do_unlock(self, *_):
-        pw = self.password_input.text
         app = App.get_running_app()
         try:
-            privkey_hex = ws.load_wallet(app.user_data_dir, pw)
+            priv = ws.load_wallet(app.user_data_dir, self.pw.text)
         except ws.WrongPasswordOrTampered:
             show_popup("Error", "Wrong password.")
             return
         except Exception as e:
-            show_popup("Error", f"Could not load wallet: {e}")
+            show_popup("Error", str(e))
             return
-        address = address_from_private_key(privkey_hex)
-        app.private_key = privkey_hex
-        app.go_to_wallet_screen(address)
+        app.private_key = priv
+        app.go_to_wallet_screen(address_from_private_key(priv))
 
 
 class CheckScreen(Screen):
-    """Lookup Effective / Trust / Push for any address."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
-
+        root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
         root.add_widget(TitleLabel(text="SOS 69069"))
         root.add_widget(SubLabel(text="Check Presence", color=TEXT_MUTED))
-
         card = Card()
         self.addr_input = BrandInput(hint_text="0x address")
         card.add_widget(self.addr_input)
-
-        row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
-        check_btn = BrandButton(text="CHECK", bg_color=BLUE)
-        check_btn.bind(on_release=self.do_check)
-        row.add_widget(check_btn)
-        mine_btn = BrandButton(text="MY ADDRESS", bg_color=INPUT_BG)
-        mine_btn.bind(on_release=self.use_mine)
-        row.add_widget(mine_btn)
+        row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
+        b1 = BrandButton(text="CHECK", bg_color=BLUE)
+        b1.bind(on_release=self.do_check)
+        b2 = BrandButton(text="MINE", bg_color=INPUT_BG)
+        b2.bind(on_release=self.use_mine)
+        row.add_widget(b1)
+        row.add_widget(b2)
         card.add_widget(row)
         root.add_widget(card)
 
-        # Metrics card
         metrics = Card()
-        self.effective_lbl = Label(
-            text="Effective: —", color=BLUE_SOFT, bold=True,
-            font_size=dp(28), size_hint_y=None, height=dp(40),
-            halign="center",
-        )
-        self.effective_lbl.bind(size=lambda *a: setattr(self.effective_lbl, "text_size", self.effective_lbl.size))
-        metrics.add_widget(self.effective_lbl)
-
-        row2 = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(12))
-        self.trust_lbl = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(16), halign="center")
-        self.trust_lbl.bind(size=lambda *a: setattr(self.trust_lbl, "text_size", self.trust_lbl.size))
-        self.push_lbl = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(16),halign="center")
-        self.push_lbl.bind(size=lambda *a: setattr(self.push_lbl, "text_size", self.push_lbl.size))
-        row2.add_widget(self.trust_lbl)
-        row2.add_widget(self.push_lbl)
+        self.eff = Label(text="Effective: —", color=BLUE_SOFT, bold=True,
+                         font_size=dp(26), size_hint_y=None, height=dp(36), halign="center")
+        self.eff.bind(size=lambda *a: setattr(self.eff, "text_size", self.eff.size))
+        metrics.add_widget(self.eff)
+        row2 = BoxLayout(size_hint_y=None, height=dp(30), spacing=dp(10))
+        self.trust = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(15), halign="center")
+        self.trust.bind(size=lambda *a: setattr(self.trust, "text_size", self.trust.size))
+        self.push = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(15),halign="center")
+        self.push.bind(size=lambda *a: setattr(self.push, "text_size", self.push.size))
+        row2.add_widget(self.trust)
+        row2.add_widget(self.push)
         metrics.add_widget(row2)
-
-        self.status_lbl = SubLabel(text="", color=TEXT_MUTED)
-        metrics.add_widget(self.status_lbl)
+        self.status = SubLabel(text="", color=TEXT_MUTED)
+        metrics.add_widget(self.status)
         root.add_widget(metrics)
-
-        root.add_widget(Label())  # spacer
+        root.add_widget(Label())
         root.add_widget(NavBar(current="check"))
         self.add_widget(root)
 
-    def on_pre_enter(self, *args):
+    def on_pre_enter(self, *a):
         app = App.get_running_app()
-        # pre-fill with unlocked address or last known
         if app.private_key:
-            try:
-                self.addr_input.text = address_from_private_key(app.private_key)
-            except Exception:
-                pass
+            self.addr_input.text = address_from_private_key(app.private_key)
         elif not self.addr_input.text:
             try:
                 self.addr_input.text = ws.peek_address(app.user_data_dir)
@@ -411,117 +406,425 @@ class CheckScreen(Screen):
         app = App.get_running_app()
         if app.private_key:
             self.addr_input.text = address_from_private_key(app.private_key)
-            self.do_check()
-            return
-        try:
-            addr = ws.peek_address(app.user_data_dir)
-            if addr:
-                self.addr_input.text = addr
-                self.do_check()
+        else:
+            try:
+                self.addr_input.text = ws.peek_address(app.user_data_dir)
+            except Exception:
+                show_popup("Info", "Unlock or create a wallet first.")
                 return
-        except Exception:
-            pass
-        show_popup("Info", "Unlock or create a wallet first.")
+        self.do_check()
 
     def do_check(self, *_):
         addr = self.addr_input.text.strip()
         if not (addr.startswith("0x") and len(addr) == 42):
             show_popup("Error", "Enter a valid 0x address.")
             return
-
-        self.status_lbl.text = "Loading…"
-        self.effective_lbl.text = "Effective: …"
-        self.trust_lbl.text = "Trust: …"
-        self.push_lbl.text = "Push: …"
+        self.status.text = "Loading…"
+        self.eff.text = "Effective: …"
+        self.trust.text = "Trust: …"
+        self.push.text = "Push: …"
 
         def worker():
             try:
-                stats = rpc.stats_of(addr)
-                Clock.schedule_once(lambda dt: self._show(stats, None), 0)
+                s = rpc.stats_of(addr)
+                Clock.schedule_once(lambda dt: self._show(s, None), 0)
             except Exception as e:
                 Clock.schedule_once(lambda dt: self._show(None, str(e)), 0)
-
         threading.Thread(target=worker, daemon=True).start()
 
-    def _show(self, stats, err):
+    def _show(self, s, err):
         if err:
-            self.status_lbl.text = err
-            self.effective_lbl.text = "Effective: —"
-            self.trust_lbl.text = "Trust: —"
-            self.push_lbl.text = "Push: —"
+            self.status.text = err
+            self.eff.text = "Effective: —"
+            self.trust.text = "Trust: —"
+            self.push.text = "Push: —"
             return
-        self.effective_lbl.text = f"Effective: {stats['effective']}"
-        self.trust_lbl.text = f"Trust: {stats['trust']}"
-        self.push_lbl.text = f"Push: {stats['push']}"
-        self.status_lbl.text = "Live on Ethereum Mainnet"
+        self.eff.text = f"Effective: {s['effective']}"
+        self.trust.text = f"Trust: {s['trust']}"
+        self.push.text = f"Push: {s['push']}"
+        self.status.text = "Live on Ethereum Mainnet"
+        # remember for Messages screen
+        App.get_running_app().last_check_address = self.addr_input.text.strip()
 
 
-class WalletScreen(Screen):
+class MessagesScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
-        root.add_widget(TitleLabel(text="SOS 69069"))
-        self.contract_label = SubLabel(text=f"Contract: {CONTRACT_ADDRESS[:10]}...", color=TEXT_MUTED)
-        root.add_widget(self.contract_label)
-        self.my_address_label = SubLabel(text="", color=YELLOW)
-        root.add_widget(self.my_address_label)
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
+        root.add_widget(TitleLabel(text="Messages"))
+        self.addr_input = BrandInput(hint_text="0x address to load messages")
+        root.add_widget(self.addr_input)
 
-        card = Card()
-        self.recipient_input = BrandInput(hint_text="Recipient address (0x...)")
-        card.add_widget(self.recipient_input)
-        self.payload_input = BrandInput(hint_text="Payload hash (0x... 32 bytes)")
-        card.add_widget(self.payload_input)
-        self.metadata_input = BrandInput(hint_text="Metadata (max 64 chars)")
-        card.add_widget(self.metadata_input)
-        sign_btn = BrandButton(text="SIGN PRESENCE", bg_color=GREEN)
-        sign_btn.bind(on_release=self.do_sign)
-        card.add_widget(sign_btn)
-        lock_btn = BrandButton(text="LOCK WALLET", bg_color=INPUT_BG)
-        lock_btn.bind(on_release=self.do_lock)
-        card.add_widget(lock_btn)
-        root.add_widget(card)
+        tabs = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
+        self.tab_trust = BrandButton(text="TRUST", bg_color=BLUE)
+        self.tab_push = BrandButton(text="PUSH", bg_color=INPUT_BG)
+        self.tab_trust.bind(on_release=lambda *_: self.switch_tab("trust"))
+        self.tab_push.bind(on_release=lambda *_: self.switch_tab("push"))
+        tabs.add_widget(self.tab_trust)
+        tabs.add_widget(self.tab_push)
+        root.add_widget(tabs)
 
-        self.result_label = Label(text="", color=GREEN_BR, font_size=dp(13),
-                                  size_hint_y=None, height=dp(100),
-                                  halign="left", valign="top")
-        self.result_label.bind(size=lambda *a: setattr(self.result_label, "text_size", self.result_label.size))
-        root.add_widget(self.result_label)
+        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        load = BrandButton(text="LOAD", bg_color=GREEN)
+        load.bind(on_release=self.load_messages)
+        mine = BrandButton(text="MINE", bg_color=INPUT_BG)
+        mine.bind(on_release=self.use_mine)
+        row.add_widget(load)
+        row.add_widget(mine)
+        root.add_widget(row)
 
-        root.add_widget(NavBar(current="wallet"))
+        self.status = SubLabel(text="Enter address and tap LOAD", color=TEXT_MUTED)
+        root.add_widget(self.status)
+
+        self.scroll = ScrollView(size_hint=(1, 1))
+        self.list_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=[0, dp(4)])
+        self.list_box.bind(minimum_height=self.list_box.setter("height"))
+        self.scroll.add_widget(self.list_box)
+        root.add_widget(self.scroll)
+
+        root.add_widget(NavBar(current="messages"))
         self.add_widget(root)
+        self.direction = "trust"
 
-    def on_pre_enter(self, *args):
+    def switch_tab(self, d):
+        self.direction = d
+        if d == "trust":
+            self.tab_trust.background_color = BLUE
+            self.tab_push.background_color = INPUT_BG
+        else:
+            self.tab_push.background_color = ORANGE
+            self.tab_trust.background_color = INPUT_BG
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if getattr(app, "last_check_address", None):
+            self.addr_input.text = app.last_check_address
+        elif app.private_key:
+            self.addr_input.text = address_from_private_key(app.private_key)
+
+    def use_mine(self, *_):
         app = App.get_running_app()
         if app.private_key:
-            addr = address_from_private_key(app.private_key)
-            self.my_address_label.text = f"Your address: {addr}"
+            self.addr_input.text = address_from_private_key(app.private_key)
+        else:
+            try:
+                self.addr_input.text = ws.peek_address(app.user_data_dir)
+            except Exception:
+                show_popup("Info", "Unlock or create a wallet first.")
+                return
+        self.load_messages()
+
+    def load_messages(self, *_):
+        addr = self.addr_input.text.strip()
+        if not (addr.startswith("0x") and len(addr) == 42):
+            show_popup("Error", "Enter a valid 0x address.")
+            return
+        self.status.text = "Loading messages…"
+        self.list_box.clear_widgets()
+
+        def worker():
+            try:
+                events = rpc.fetch_messages(addr, direction=self.direction)
+                Clock.schedule_once(lambda dt: self._render(events, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._render([], str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render(self, events, err):
+        self.list_box.clear_widgets()
+        if err:
+            self.status.text = err
+            return
+        if not events:
+            self.status.text = "No messages with metadata found in recent blocks."
+            return
+        self.status.text = f"Showing {len(events)} message(s)"
+        for ev in events:
+            self.list_box.add_widget(self._msg_card(ev))
+
+    def _msg_card(self, ev):
+        card = Card()
+        meta = (ev.get("metadata") or "").strip()
+        party = ev["signer"] if self.direction == "trust" else ev["intendedTo"]
+        dir_label = "TRUST Received 1 SOS" if self.direction == "trust" else "PUSH Sent 1 SOS"
+        dir_color = GREEN_BR if self.direction == "trust" else ORANGE
+
+        if meta:
+            m = Label(text=meta, color=TEXT, bold=True, font_size=dp(15),
+                      size_hint_y=None, halign="left", valign="top")
+            m.bind(size=lambda *a, w=m: setattr(w, "text_size", (w.width, None)))
+            m.bind(texture_size=lambda *a, w=m: setattr(w, "height", w.texture_size[1]))
+            card.add_widget(m)
+
+        card.add_widget(Label(
+            text=short_addr(party), color=YELLOW, font_size=dp(12),
+            size_hint_y=None, height=dp(18), halign="left",
+        ))
+        when = fmt_time(ev.get("timestamp", 0))
+        card.add_widget(Label(
+            text=f"tx{ev['txHash'][:18]}…  ·  block {ev['blockNumber']}  ·  {when}",
+            color=TEXT_MUTED, font_size=dp(11), size_hint_y=None, height=dp(16),
+        ))
+
+        row = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(8))
+        row.add_widget(Label(text=dir_label, color=dir_color, bold=True,
+                             font_size=dp(12), size_hint_x=0.6, halign="left"))
+        code = extract_conv_code(meta) or (ev["txHash"][2:10].lower() if ev.get("txHash") else "")
+        if code:
+            reply = Button(text="REPLY", background_normal="", background_color=BLUE_SOFT,
+                           color=TEXT, bold=True, font_size=dp(12), size_hint_x=0.4)
+            reply.bind(on_release=lambda b, c=code, p=party: self._reply(c, p))
+            row.add_widget(reply)
+        card.add_widget(row)
+        return card
+
+    def _reply(self, code, party):
+        app = App.get_running_app()
+        app.reply_code = code
+        app.reply_to = party
+        if not app.private_key:
+            show_popup("Info", "Unlock wallet first to reply.")
+            self.manager.current = "unlock"
+            return
+        self.manager.current = "sign"
+
+
+class SignScreen(Screen):
+    """Single sign with optional reply code."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
+        root.add_widget(TitleLabel(text="Sign Presence"))
+        self.my_lbl = SubLabel(text="", color=YELLOW)
+        root.add_widget(self.my_lbl)
+
+        card = Card()
+        self.recipient = BrandInput(hint_text="Recipient address (0x...)")
+        card.add_widget(self.recipient)
+        self.payload = BrandInput(hint_text="Payload hash (optional 0x...)")
+        card.add_widget(self.payload)
+        self.code = BrandInput(hint_text="Conversation code (8 hex, optional)")
+        card.add_widget(self.code)
+        self.metadata = BrandInput(hint_text="Metadata / message (max 64 chars)")
+        card.add_widget(self.metadata)
+        self.counter = SubLabel(text="0/64 characters", color=TEXT_MUTED)
+        card.add_widget(self.counter)
+        self.metadata.bind(text=self._update_count)
+        self.code.bind(text=self._update_count)
+
+        sign_btn = BrandButton(text="SIGN", bg_color=GREEN)
+        sign_btn.bind(on_release=self.do_sign)
+        card.add_widget(sign_btn)
+        root.add_widget(card)
+
+        self.result = Label(text="", color=GREEN_BR, font_size=dp(12),
+                            size_hint_y=None, height=dp(90),
+                            halign="left", valign="top")
+        self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
+        root.add_widget(self.result)
+        root.add_widget(NavBar(current="sign"))
+        self.add_widget(root)
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if app.private_key:
+            self.my_lbl.text = "You: " + address_from_private_key(app.private_key)
+        if getattr(app, "reply_code", None):
+            self.code.text = app.reply_code
+            app.reply_code = None
+        if getattr(app, "reply_to", None):
+            self.recipient.text = app.reply_to
+            app.reply_to = None
+        self._update_count()
+
+    def _update_count(self, *a):
+        code = self.code.text.strip()
+        has_code = bool(re.fullmatch(r"[a-fA-F0-9]{8}", code))
+        limit = 56 if has_code else MAX_META
+        n = utf8_len(self.metadata.text)
+        self.counter.text = f"{n}/{limit} characters"
+        self.counter.color = DANGER if n > limit else TEXT_MUTED
 
     def do_sign(self, *_):
         app = App.get_running_app()
         if not app.private_key:
             show_popup("Error", "Wallet is locked.")
             return
-        recipient = self.recipient_input.text.strip()
-        payload = self.payload_input.text.strip()
-        metadata = self.metadata_input.text.strip()
-        if len(metadata) > 64:
-            show_popup("Error", "Metadata must be 64 characters or fewer.")
+        to = self.recipient.text.strip()
+        payload = self.payload.text.strip() or ("0x" + os.urandom(32).hex())
+        code = self.code.text.strip().lower()
+        text = self.metadata.text.strip()
+        has_code = bool(re.fullmatch(r"[a-fA-F0-9]{8}", code))
+        if has_code:
+            meta = f"{text} {code}".strip() if text else code
+            if utf8_len(meta) > MAX_META:
+                show_popup("Error", "Message + code exceeds 64 characters.")
+                return
+        else:
+            meta = text
+            if utf8_len(meta) > MAX_META:
+                show_popup("Error", "Metadata exceeds 64 characters.")
+                return
+        if not (to.startswith("0x") and len(to) == 42):
+            show_popup("Error", "Invalid recipient address.")
             return
         try:
-            result = sign_record(app.private_key, CHAIN_ID, recipient, payload, metadata)
-            self.result_label.text = f"Signature:\n{result['signature']}"
+            result = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+            self.result.text = f"Signature:\n{result['signature']}\n\nMetadata: {meta}"
         except Exception as e:
             show_popup("Error", f"Signing failed: {e}")
+
+
+class BatchScreen(Screen):
+    """Paste many addresses + messages, sign all."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
+        root.add_widget(TitleLabel(text="Batch Sign"))
+        root.add_widget(SubLabel(text="One address and one message per line", color=TEXT_MUTED))
+
+        card = Card()
+        card.add_widget(SubLabel(text="Addresses", color=TEXT_SEC))
+        self.addrs = MultiInput(hint_text="0xabc...\n0xdef...")
+        card.add_widget(self.addrs)
+        card.add_widget(SubLabel(text="Messages (max 64 chars each)", color=TEXT_SEC))
+        self.msgs = MultiInput(hint_text="hello\nworld")
+        card.add_widget(self.msgs)
+        self.info = SubLabel(text="0 pairs", color=TEXT_MUTED)
+        card.add_widget(self.info)
+        self.addrs.bind(text=self._count)
+        self.msgs.bind(text=self._count)
+
+        load = BrandButton(text="LOAD & PREVIEW", bg_color=BLUE)
+        load.bind(on_release=self.load_pairs)
+        card.add_widget(load)
+        root.add_widget(card)
+
+        self.preview = Label(text="", color=TEXT_SEC, font_size=dp(12),
+                             size_hint_y=None, height=dp(80),
+                             halign="left", valign="top")
+        self.preview.bind(size=lambda *a: setattr(self.preview, "text_size", self.preview.size))
+        root.add_widget(self.preview)
+
+        self.sign_btn = BrandButton(text="SIGN ALL", bg_color=GREEN)
+        self.sign_btn.bind(on_release=self.sign_all)
+        self.sign_btn.disabled = True
+        root.add_widget(self.sign_btn)
+
+        self.result = Label(text="", color=GREEN_BR, font_size=dp(11),
+                            size_hint_y=None, height=dp(70),
+                            halign="left", valign="top")
+        self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
+        root.add_widget(self.result)
+        root.add_widget(NavBar(current="batch"))
+        self.add_widget(root)
+        self.pairs = []
+
+    def _count(self, *a):
+        a = [x.strip() for x in self.addrs.text.splitlines() if x.strip()]
+        m = [x.strip() for x in self.msgs.text.splitlines() if x.strip()]
+        self.info.text = f"{len(a)} addresses · {len(m)} messages"
+
+    def load_pairs(self, *_):
+        addrs = [x.strip() for x in self.addrs.text.splitlines() if x.strip()]
+        msgs = [x.strip() for x in self.msgs.text.splitlines() if x.strip()]
+        if not addrs or not msgs:
+            show_popup("Error", "Paste at least one address and one message.")
+            return
+        if len(addrs) != len(msgs):
+            show_popup("Error", f"Line count mismatch: {len(addrs)} addresses vs {len(msgs)} messages.")
+            return
+        if len(addrs) > 30:
+            show_popup("Error", "Max 30 pairs per batch on mobile.")
+            return
+        bad = []
+        for i, (a, m) in enumerate(zip(addrs, msgs)):
+            if not (a.startswith("0x") and len(a) == 42):
+                bad.append(f"Line {i+1}: invalid address")
+            if utf8_len(m) > MAX_META:
+                bad.append(f"Line {i+1}: message > 64 chars")
+        if bad:
+            show_popup("Error", bad[0])
+            return
+        self.pairs = list(zip(addrs, msgs))
+        preview = "\n".join(f"{i+1}. {short_addr(a)} → {m[:40]}" for i, (a, m) in enumerate(self.pairs[:8]))
+        if len(self.pairs) > 8:
+            preview += f"\n… +{len(self.pairs)-8} more"
+        self.preview.text = preview
+        self.sign_btn.disabled = False
+        self.info.text = f"{len(self.pairs)} pairs ready"
+        self.result.text = ""
+
+    def sign_all(self, *_):
+        app = App.get_running_app()
+        if not app.private_key:
+            show_popup("Error", "Wallet is locked.")
+            return
+        if not self.pairs:
+            show_popup("Error", "Load pairs first.")
+            return
+        self.sign_btn.disabled = True
+        self.result.text = "Signing…"
+
+        def worker():
+            out = []
+            try:
+                for i, (to, meta) in enumerate(self.pairs):
+                    payload = "0x" + os.urandom(32).hex()
+                    r = sign_record(app.private_key, CHAIN_ID, to, payload, meta)
+                    out.append({"to": to, "metadata": meta, "signature": r["signature"]})
+                Clock.schedule_once(lambda dt: self._done(out, None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._done([], str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _done(self, results, err):
+        self.sign_btn.disabled = False
+        if err:
+            self.result.text = f"Error: {err}"
+            return
+        lines = [f"{i+1}. {short_addr(r['to'])}  sig={r['signature'][:18]}…" for i, r in enumerate(results)]
+        self.result.text = f"Signed {len(results)} messages:\n" + "\n".join(lines[:6])
+        if len(results) > 6:
+            self.result.text += f"\n… +{len(results)-6} more"
+        # store for possible later submit
+        App.get_running_app().last_batch_results = results
+        show_popup("Done", f"Signed {len(results)} messages.\nCopy signatures from the result area.")
+
+
+class WalletScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+        root.add_widget(TitleLabel(text="Wallet"))
+        self.addr_lbl = SubLabel(text="", color=YELLOW)
+        root.add_widget(self.addr_lbl)
+        card = Card()
+        lock = BrandButton(text="LOCK WALLET", bg_color=INPUT_BG)
+        lock.bind(on_release=self.do_lock)
+        card.add_widget(lock)
+        root.add_widget(card)
+        root.add_widget(Label())
+        root.add_widget(NavBar(current="wallet"))
+        self.add_widget(root)
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if app.private_key:
+            self.addr_lbl.text = address_from_private_key(app.private_key)
 
     def do_lock(self, *_):
         app = App.get_running_app()
         app.private_key = None
-        self.result_label.text = ""
         self.manager.current = "unlock"
 
 
 class SOSApp(App):
     private_key = None
+    last_check_address = None
+    reply_code = None
+    reply_to = None
+    last_batch_results = None
 
     def build(self):
         os.makedirs(self.user_data_dir, exist_ok=True)
@@ -531,8 +834,10 @@ class SOSApp(App):
         sm.add_widget(ImportWalletScreen(name="import"))
         sm.add_widget(UnlockScreen(name="unlock"))
         sm.add_widget(CheckScreen(name="check"))
+        sm.add_widget(MessagesScreen(name="messages"))
+        sm.add_widget(SignScreen(name="sign"))
+        sm.add_widget(BatchScreen(name="batch"))
         sm.add_widget(WalletScreen(name="wallet"))
-
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"
         else:
@@ -541,7 +846,7 @@ class SOSApp(App):
         return sm
 
     def go_to_wallet_screen(self, address):
-        self.sm.current = "wallet"
+        self.sm.current = "sign"
 
 
 if __name__ == "__main__":
