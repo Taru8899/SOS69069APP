@@ -4,7 +4,7 @@ package.name = sos69069
 package.domain = org.yourname
 source.dir = .
 source.main = main.py
-requirements = python3,kivy,eth_account,eth_utils,pycryptodome
+requirements = python3,kivy
 version = 0.1
 orientation = portrait
 
