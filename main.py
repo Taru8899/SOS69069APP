@@ -5,45 +5,152 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
+from kivy.graphics import Color, RoundedRectangle
+from kivy.core.window import Window
+from kivy.metrics import dp
+from kivy.utils import get_color_from_hex
 import os
 
 from sos_core import sign_record, address_from_private_key, CONTRACT_ADDRESS
-from pure_crypto import privkey_to_pubkey
 import wallet_storage as ws
 
-CHAIN_ID = 1  # set to your target chain id
+CHAIN_ID = 1
+
+# Brand colors from style.css
+BG          = get_color_from_hex("#0a0e0b")
+CARD_BG     = get_color_from_hex("#141b16")
+INPUT_BG    = get_color_from_hex("#232f27")
+BORDER      = get_color_from_hex("#2c3830")
+TEXT        = get_color_from_hex("#ffffff")
+TEXT_SEC    = get_color_from_hex("#bbbbbb")
+TEXT_MUTED  = get_color_from_hex("#9ca3af")
+GREEN       = get_color_from_hex("#04aa34")
+GREEN_BR    = get_color_from_hex("#22c55e")
+BLUE        = get_color_from_hex("#0038fe")
+BLUE_SOFT   = get_color_from_hex("#5b8bff")
+YELLOW      = get_color_from_hex("#facc15")
+ORANGE      = get_color_from_hex("#f97316")
+DANGER      = get_color_from_hex("#ef4444")
+
+Window.clearcolor = BG
+
+
+class Card(BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = "vertical"
+        self.padding = [dp(18), dp(14)]
+        self.spacing = dp(10)
+        self.size_hint_y = None
+        self.bind(minimum_height=self.setter("height"))
+        with self.canvas.before:
+            Color(*CARD_BG)
+            self._bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+        self.bind(pos=self._upd, size=self._upd)
+
+    def _upd(self, *a):
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+
+
+class BrandButton(Button):
+    def __init__(self, text="", bg_color=None, **kwargs):
+        super().__init__(**kwargs)
+        self.text = text
+        self.size_hint_y = None
+        self.height = dp(52)
+        self.background_normal = ""
+        self.background_color = bg_color or BLUE
+        self.color = TEXT
+        self.bold = True
+        self.font_size = dp(16)
+
+
+class BrandInput(TextInput):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint_y = None
+        self.height = dp(48)
+        self.background_normal = ""
+        self.background_active = ""
+        self.background_color = INPUT_BG
+        self.foreground_color = TEXT
+        self.cursor_color = BLUE_SOFT
+        self.padding = [dp(14), dp(12)]
+        self.font_size = dp(15)
+        self.multiline = False
+        self.write_tab = False
+
+
+class TitleLabel(Label):
+    def __init__(self, text="", **kwargs):
+        super().__init__(**kwargs)
+        self.text = text
+        self.color = TEXT
+        self.bold = True
+        self.font_size = dp(22)
+        self.size_hint_y = None
+        self.height = dp(36)
+        self.halign = "center"
+        self.bind(size=lambda *a: setattr(self, "text_size", self.size))
+
+
+class SubLabel(Label):
+    def __init__(self, text="", color=None, **kwargs):
+        super().__init__(**kwargs)
+        self.text = text
+        self.color = color or TEXT_SEC
+        self.font_size = dp(14)
+        self.size_hint_y = None
+        self.height = dp(28)
+        self.halign = "center"
+        self.bind(size=lambda *a: setattr(self, "text_size", self.size))
 
 
 def show_popup(title, message):
-    layout = BoxLayout(orientation="vertical", padding=10, spacing=10)
-    layout.add_widget(Label(text=message))
-    close_btn = Button(text="OK", size_hint_y=None, height=50)
-    popup = Popup(title=title, content=layout, size_hint=(0.85, 0.4))
-    close_btn.bind(on_release=popup.dismiss)
-    layout.add_widget(close_btn)
+    content = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
+    msg = Label(text=message, color=TEXT, font_size=dp(14),
+                halign="center", valign="middle")
+    msg.bind(size=lambda *a: setattr(msg, "text_size", msg.size))
+    content.add_widget(msg)
+    close = BrandButton(text="OK", bg_color=BLUE)
+    popup = Popup(title=title, title_color=TEXT, title_size=dp(16),
+                  content=content, size_hint=(0.88, 0.38),
+                  background="", separator_color=BORDER, auto_dismiss=True)
+    with popup.canvas.before:
+        Color(*CARD_BG)
+        popup._bg = RoundedRectangle(pos=popup.pos, size=popup.size, radius=[dp(12)])
+    popup.bind(pos=lambda *a: setattr(popup._bg, "pos", popup.pos),
+               size=lambda *a: setattr(popup._bg, "size", popup.size))
+    close.bind(on_release=popup.dismiss)
+    content.add_widget(close)
     popup.open()
 
 
 class WelcomeScreen(Screen):
-    """Shown when no wallet exists yet: choose create or import."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        layout = BoxLayout(orientation="vertical", padding=30, spacing=20)
+        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(16))
+        header = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(90), spacing=dp(4))
+        header.add_widget(TitleLabel(text="SOS 69069"))
+        header.add_widget(SubLabel(text="Ethereum Mainnet", color=TEXT_MUTED))
+        root.add_widget(header)
 
-        layout.add_widget(Label(text="SOS 69069", font_size=28, size_hint_y=None, height=60))
-        layout.add_widget(Label(text="No wallet found on this device.", size_hint_y=None, height=40))
-
-        create_btn = Button(text="CREATE NEW WALLET", size_hint_y=None, height=60)
+        card = Card()
+        card.add_widget(SubLabel(text="No wallet found on this device.", color=TEXT_SEC))
+        card.add_widget(Label(size_hint_y=None, height=dp(8)))
+        create_btn = BrandButton(text="CREATE NEW WALLET", bg_color=GREEN)
         create_btn.bind(on_release=self.go_create)
-        layout.add_widget(create_btn)
-
-        import_btn = Button(text="IMPORT EXISTING KEY", size_hint_y=None, height=60)
+        card.add_widget(create_btn)
+        import_btn = BrandButton(text="IMPORT EXISTING KEY", bg_color=BLUE)
         import_btn.bind(on_release=self.go_import)
-        layout.add_widget(import_btn)
-
-        layout.add_widget(Label())  # spacer
-        self.add_widget(layout)
+        card.add_widget(import_btn)
+        root.add_widget(card)
+        root.add_widget(Label())
+        footer = SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED)
+        footer.font_size = dp(12)
+        root.add_widget(footer)
+        self.add_widget(root)
 
     def go_create(self, *_):
         self.manager.current = "create"
@@ -53,37 +160,28 @@ class WelcomeScreen(Screen):
 
 
 class CreateWalletScreen(Screen):
-    """Generates a new private key and asks the user to set a password."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout = BoxLayout(orientation="vertical", padding=30, spacing=15)
+        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root.add_widget(TitleLabel(text="Create New Wallet"))
+        hint = SubLabel(text="A new private key will be generated on this device.\nSet a password to encrypt it locally.", color=TEXT_SEC)
+        hint.height = dp(50)
+        root.add_widget(hint)
 
-        self.layout.add_widget(Label(text="Create New Wallet", font_size=22, size_hint_y=None, height=50))
-        self.layout.add_widget(Label(
-            text="A new private key will be generated on this device.\n"
-                 "Set a password to encrypt it locally.",
-            size_hint_y=None, height=80,
-        ))
-
-        self.password_input = TextInput(hint_text="Set a password", password=True,
-                                         multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.password_input)
-
-        self.confirm_input = TextInput(hint_text="Confirm password", password=True,
-                                        multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.confirm_input)
-
-        create_btn = Button(text="GENERATE & SAVE", size_hint_y=None, height=60)
+        card = Card()
+        self.password_input = BrandInput(hint_text="Set a password", password=True)
+        card.add_widget(self.password_input)
+        self.confirm_input = BrandInput(hint_text="Confirm password", password=True)
+        card.add_widget(self.confirm_input)
+        create_btn = BrandButton(text="GENERATE & SAVE", bg_color=GREEN)
         create_btn.bind(on_release=self.do_create)
-        self.layout.add_widget(create_btn)
-
-        back_btn = Button(text="BACK", size_hint_y=None, height=50)
+        card.add_widget(create_btn)
+        back_btn = BrandButton(text="BACK", bg_color=INPUT_BG)
         back_btn.bind(on_release=self.go_back)
-        self.layout.add_widget(back_btn)
-
-        self.layout.add_widget(Label())
-        self.add_widget(self.layout)
+        card.add_widget(back_btn)
+        root.add_widget(card)
+        root.add_widget(Label())
+        self.add_widget(root)
 
     def go_back(self, *_):
         self.manager.current = "welcome"
@@ -91,55 +189,41 @@ class CreateWalletScreen(Screen):
     def do_create(self, *_):
         pw = self.password_input.text
         confirm = self.confirm_input.text
-
         if len(pw) < 8:
             show_popup("Error", "Password must be at least 8 characters.")
             return
         if pw != confirm:
             show_popup("Error", "Passwords do not match.")
             return
-
         privkey_hex = "0x" + os.urandom(32).hex()
         address = address_from_private_key(privkey_hex)
-
         app = App.get_running_app()
         ws.save_wallet(app.user_data_dir, privkey_hex, address, pw)
-
         show_popup("Wallet Created", f"Address:\n{address}\n\nBack up this device securely.")
         app.go_to_wallet_screen(address)
 
 
 class ImportWalletScreen(Screen):
-    """Imports an existing raw private key and encrypts it with a new password."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout = BoxLayout(orientation="vertical", padding=30, spacing=15)
-
-        self.layout.add_widget(Label(text="Import Wallet", font_size=22, size_hint_y=None, height=50))
-
-        self.privkey_input = TextInput(hint_text="Private key (0x...)", multiline=False,
-                                        size_hint_y=None, height=50)
-        self.layout.add_widget(self.privkey_input)
-
-        self.password_input = TextInput(hint_text="Set a password", password=True,
-                                         multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.password_input)
-
-        self.confirm_input = TextInput(hint_text="Confirm password", password=True,
-                                        multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.confirm_input)
-
-        import_btn = Button(text="IMPORT & SAVE", size_hint_y=None, height=60)
+        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root.add_widget(TitleLabel(text="Import Wallet"))
+        card = Card()
+        self.privkey_input = BrandInput(hint_text="Private key (0x...)")
+        card.add_widget(self.privkey_input)
+        self.password_input = BrandInput(hint_text="Set a password", password=True)
+        card.add_widget(self.password_input)
+        self.confirm_input = BrandInput(hint_text="Confirm password", password=True)
+        card.add_widget(self.confirm_input)
+        import_btn = BrandButton(text="IMPORT & SAVE", bg_color=GREEN)
         import_btn.bind(on_release=self.do_import)
-        self.layout.add_widget(import_btn)
-
-        back_btn = Button(text="BACK", size_hint_y=None, height=50)
+        card.add_widget(import_btn)
+        back_btn = BrandButton(text="BACK", bg_color=INPUT_BG)
         back_btn.bind(on_release=self.go_back)
-        self.layout.add_widget(back_btn)
-
-        self.layout.add_widget(Label())
-        self.add_widget(self.layout)
+        card.add_widget(back_btn)
+        root.add_widget(card)
+        root.add_widget(Label())
+        self.add_widget(root)
 
     def go_back(self, *_):
         self.manager.current = "welcome"
@@ -148,14 +232,12 @@ class ImportWalletScreen(Screen):
         raw = self.privkey_input.text.strip()
         pw = self.password_input.text
         confirm = self.confirm_input.text
-
         if len(pw) < 8:
             show_popup("Error", "Password must be at least 8 characters.")
             return
         if pw != confirm:
             show_popup("Error", "Passwords do not match.")
             return
-
         try:
             privkey_int = int(raw.replace("0x", ""), 16)
             if not (0 < privkey_int < 2**256):
@@ -165,37 +247,30 @@ class ImportWalletScreen(Screen):
         except Exception:
             show_popup("Error", "Invalid private key format.")
             return
-
         app = App.get_running_app()
         ws.save_wallet(app.user_data_dir, privkey_hex, address, pw)
-
         show_popup("Wallet Imported", f"Address:\n{address}")
         app.go_to_wallet_screen(address)
 
 
 class UnlockScreen(Screen):
-    """Shown when a wallet already exists: ask for the password."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout = BoxLayout(orientation="vertical", padding=30, spacing=15)
-
-        self.layout.add_widget(Label(text="Unlock Wallet", font_size=22, size_hint_y=None, height=50))
-        self.address_label = Label(text="", size_hint_y=None, height=40)
-        self.layout.add_widget(self.address_label)
-
-        self.password_input = TextInput(hint_text="Password", password=True,
-                                         multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.password_input)
-
-        unlock_btn = Button(text="UNLOCK", size_hint_y=None, height=60)
+        root = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        root.add_widget(TitleLabel(text="Unlock Wallet"))
+        self.address_label = SubLabel(text="", color=YELLOW)
+        root.add_widget(self.address_label)
+        card = Card()
+        self.password_input = BrandInput(hint_text="Password", password=True)
+        card.add_widget(self.password_input)
+        unlock_btn = BrandButton(text="UNLOCK", bg_color=GREEN)
         unlock_btn.bind(on_release=self.do_unlock)
-        self.layout.add_widget(unlock_btn)
+        card.add_widget(unlock_btn)
+        root.add_widget(card)
+        root.add_widget(Label())
+        self.add_widget(root)
 
-        self.layout.add_widget(Label())
-        self.add_widget(self.layout)
-
-    def on_pre_enter(self):
+    def on_pre_enter(self, *args):
         app = App.get_running_app()
         try:
             addr = ws.peek_address(app.user_data_dir)
@@ -214,52 +289,47 @@ class UnlockScreen(Screen):
         except Exception as e:
             show_popup("Error", f"Could not load wallet: {e}")
             return
-
         address = address_from_private_key(privkey_hex)
         app.private_key = privkey_hex
         app.go_to_wallet_screen(address)
 
 
 class WalletScreen(Screen):
-    """Main signing screen, only reachable after unlock/create/import."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(10))
+        root.add_widget(TitleLabel(text="SOS 69069"))
+        self.contract_label = SubLabel(text=f"Contract: {CONTRACT_ADDRESS[:10]}...", color=TEXT_MUTED)
+        root.add_widget(self.contract_label)
+        self.my_address_label = SubLabel(text="", color=YELLOW)
+        root.add_widget(self.my_address_label)
 
-        self.address_label = Label(text=f"Contract: {CONTRACT_ADDRESS}",
-                                    size_hint_y=None, height=40)
-        self.layout.add_widget(self.address_label)
-
-        self.my_address_label = Label(text="", size_hint_y=None, height=40)
-        self.layout.add_widget(self.my_address_label)
-
-        self.recipient_input = TextInput(hint_text="Recipient address (0x...)",
-                                          multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.recipient_input)
-
-        self.payload_input = TextInput(hint_text="Payload hash (0x... 32 bytes)",
-                                        multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.payload_input)
-
-        self.metadata_input = TextInput(hint_text="Metadata (max 64 chars)",
-                                         multiline=False, size_hint_y=None, height=50)
-        self.layout.add_widget(self.metadata_input)
-
-        sign_btn = Button(text="SIGN PRESENCE", size_hint_y=None, height=60)
+        card = Card()
+        self.recipient_input = BrandInput(hint_text="Recipient address (0x...)")
+        card.add_widget(self.recipient_input)
+        self.payload_input = BrandInput(hint_text="Payload hash (0x... 32 bytes)")
+        card.add_widget(self.payload_input)
+        self.metadata_input = BrandInput(hint_text="Metadata (max 64 chars)")
+        card.add_widget(self.metadata_input)
+        sign_btn = BrandButton(text="SIGN PRESENCE", bg_color=GREEN)
         sign_btn.bind(on_release=self.do_sign)
-        self.layout.add_widget(sign_btn)
-
-        lock_btn = Button(text="LOCK WALLET", size_hint_y=None, height=50)
+        card.add_widget(sign_btn)
+        lock_btn = BrandButton(text="LOCK WALLET", bg_color=INPUT_BG)
         lock_btn.bind(on_release=self.do_lock)
-        self.layout.add_widget(lock_btn)
+        card.add_widget(lock_btn)
+        root.add_widget(card)
 
-        self.result_label = Label(text="", size_hint_y=None, height=150)
-        self.layout.add_widget(self.result_label)
+        self.result_label = Label(text="", color=GREEN_BR, font_size=dp(13),
+                                  size_hint_y=None, height=dp(120),
+                                  halign="left", valign="top")
+        self.result_label.bind(size=lambda *a: setattr(self.result_label, "text_size", self.result_label.size))
+        root.add_widget(self.result_label)
+        footer = SubLabel(text="Whatever you do. SOS records. Continue ...", color=TEXT_MUTED)
+        footer.font_size = dp(12)
+        root.add_widget(footer)
+        self.add_widget(root)
 
-        self.add_widget(self.layout)
-
-    def on_pre_enter(self):
+    def on_pre_enter(self, *args):
         app = App.get_running_app()
         if app.private_key:
             addr = address_from_private_key(app.private_key)
@@ -270,15 +340,12 @@ class WalletScreen(Screen):
         if not app.private_key:
             show_popup("Error", "Wallet is locked.")
             return
-
         recipient = self.recipient_input.text.strip()
         payload = self.payload_input.text.strip()
         metadata = self.metadata_input.text.strip()
-
         if len(metadata) > 64:
             show_popup("Error", "Metadata must be 64 characters or fewer.")
             return
-
         try:
             result = sign_record(app.private_key, CHAIN_ID, recipient, payload, metadata)
             self.result_label.text = f"Signature:\n{result['signature']}"
@@ -297,19 +364,16 @@ class SOSApp(App):
 
     def build(self):
         os.makedirs(self.user_data_dir, exist_ok=True)
-
         sm = ScreenManager()
         sm.add_widget(WelcomeScreen(name="welcome"))
         sm.add_widget(CreateWalletScreen(name="create"))
         sm.add_widget(ImportWalletScreen(name="import"))
         sm.add_widget(UnlockScreen(name="unlock"))
         sm.add_widget(WalletScreen(name="wallet"))
-
         if ws.wallet_exists(self.user_data_dir):
             sm.current = "unlock"
         else:
             sm.current = "welcome"
-
         self.sm = sm
         return sm
 
