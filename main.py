@@ -126,20 +126,20 @@ def etherscan_tx(txh: str) -> str:
 
 
 class LinkButton(Button):
-    """Tappable link-style control."""
+    """Tappable green link-style control (all app links)."""
     def __init__(self, text="", url=None, color=None, font_size=None,
-                 height=None, **kwargs):
+                 height=None, halign="left", **kwargs):
         super().__init__(**kwargs)
         self.text = text
         self.background_normal = ""
         self.background_down = ""
         self.background_color = (0, 0, 0, 0)
-        self.color = color or BLUE_SOFT
+        self.color = color or GREEN_BR
         self.bold = True
         self.font_size = font_size or dp(13)
         self.size_hint_y = None
         self.height = height or dp(28)
-        self.halign = "left"
+        self.halign = halign
         self.url = url
         self.bind(size=lambda *a: setattr(self, "text_size", (self.width, None)))
         self.bind(on_release=lambda *_: open_url(self.url) if self.url else None)
@@ -521,7 +521,7 @@ class NavBar(BoxLayout):
             btn = Button(
                 text=label, background_normal="",
                 background_color=color if name == current else INPUT_BG,
-                color=TEXT, bold=True, font_size=dp(10), size_hint_x=1,
+                color=TEXT, bold=True, font_size=dp(13), size_hint_x=1,
             )
             btn.bind(on_release=lambda b, n=name: self._go(n))
             self.add_widget(btn)
@@ -883,7 +883,7 @@ class CheckScreen(Screen):
         for btn, w in ((self.win_24h, "24h"), (self.win_week, "week"),
                        (self.win_month, "month"), (self.win_year, "year"),
                        (self.win_all, "all")):
-            btn.bind(on_release=lambda b, ww=w: self.select_window(ww))
+            btn.bind(on_release=(lambda ww: lambda *_: self.select_window(ww))(w))
             row_a.add_widget(btn)
         trends_card.add_widget(row_a)
 
@@ -947,10 +947,11 @@ class CheckScreen(Screen):
 
 
     def load_trends(self, *_):
-        self.trends_status.text = "Loading messages from the whole contract history…"
+        window = getattr(self, "_trend_window", None) or "24h"
+        year = getattr(self, "_trend_year", None)
+        self._trend_window = window
+        self.trends_status.text = f"Loading trends ({window})…"
         self.trends_box.clear_widgets()
-        window = self._trend_window
-        year = self._trend_year
 
         def worker():
             try:
@@ -1004,13 +1005,40 @@ class CheckScreen(Screen):
             if word.lower() not in meta.lower():
                 continue
             card = Card()
-            card.add_widget(CopyableText(text=meta[:160], color=TEXT, font_size=dp(14), height=dp(44)))
+            title = Label(
+                text=meta[:200],
+                color=TEXT,
+                bold=True,
+                font_size=dp(17),
+                halign="left",
+                valign="top",
+                size_hint_y=None,
+                height=dp(52),
+            )
+            title.bind(size=lambda *a, w=title: setattr(w, "text_size", (w.width, None)))
+            card.add_widget(title)
             signer = ev.get("signer") or ""
-            card.add_widget(LinkButton(
-                text=short_addr(signer) + " ↗",
-                url=etherscan_address(signer),
-                color=YELLOW,
-            ))
+            addr_l = Label(
+                text=short_addr(signer),
+                color=TEXT_SEC,
+                bold=True,
+                font_size=dp(14),
+                halign="center",
+                size_hint_y=None,
+                height=dp(26),
+            )
+            addr_l.bind(size=lambda *a, w=addr_l: setattr(w, "text_size", w.size))
+            card.add_widget(addr_l)
+            txh = ev.get("txHash") or ""
+            if txh:
+                card.add_widget(LinkButton(
+                    text=f"tx {txh[:18]}… ↗",
+                    url=etherscan_tx(txh),
+                    color=GREEN_BR,
+                    font_size=dp(13),
+                    height=dp(26),
+                    halign="center",
+                ))
             self.trends_box.add_widget(card)
             shown += 1
             if shown >= 20:
@@ -1119,28 +1147,42 @@ class MessagesScreen(Screen):
             meta = (ev.get("metadata") or "").strip()
             when = fmt_time(ev.get("timestamp") or 0)
             card = Card()
-            card.add_widget(CopyableText(text=meta, color=TEXT, font_size=dp(14), height=dp(48)))
+            card.add_widget(CopyableText(text=meta, color=TEXT, font_size=dp(15), height=dp(48)))
             txh = ev.get("txHash") or ""
-            card.add_widget(LinkButton(
-                text=f"tx {txh[:18]}… · blk {ev.get('blockNumber','')} · {when} ↗",
-                url=etherscan_tx(txh) if txh else None,
-                color=TEXT_MUTED,
-                font_size=dp(12),
-                height=dp(26),
-            ))
+            if txh:
+                card.add_widget(LinkButton(
+                    text=f"tx {txh[:18]}… · blk {ev.get('blockNumber','')} · {when} ↗",
+                    url=etherscan_tx(txh),
+                    color=GREEN_BR,
+                    font_size=dp(12),
+                    height=dp(26),
+                ))
             from_a = ev.get("signer") or ""
             to_a = ev.get("intendedTo") or ""
-            card.add_widget(CopyableText(
+            row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(6))
+            row.add_widget(CopyableText(
                 text=f"{short_addr(from_a)} → {short_addr(to_a)}",
-                color=YELLOW, font_size=dp(12), height=dp(22),
+                color=YELLOW, font_size=dp(12), height=dp(32),
             ))
             code = extract_conv_code(meta) or (
-                txh[2:10].lower() if txh.startswith("0x") and len(txh) >= 10 else ""
+                txh[2:10].lower() if isinstance(txh, str) and txh.startswith("0x") and len(txh) >= 10 else ""
             )
             if code:
-                rb = BrandButton(text=f"REPLY · {code}", bg_color=BLUE)
+                rb = Button(
+                    text=f"REPLY · {code}",
+                    background_normal="",
+                    background_color=BLUE,
+                    color=TEXT,
+                    bold=True,
+                    font_size=dp(11),
+                    size_hint_x=None,
+                    width=dp(120),
+                    size_hint_y=None,
+                    height=dp(32),
+                )
                 rb.bind(on_release=lambda b, c=code, a=from_a: self._reply(c, a))
-                card.add_widget(rb)
+                row.add_widget(rb)
+            card.add_widget(row)
             self.list_box.add_widget(card)
 
 
@@ -1177,7 +1219,7 @@ class SignScreen(Screen):
         card.add_widget(self.code)
         self.metadata = BrandInput(hint_text="Metadata / message (max 64 chars)")
         card.add_widget(self.metadata)
-        self.counter = SubLabel(text="0/64 characters", color=TEXT_MUTED)
+        self.counter = Label(text="0/64 characters", color=TEXT, bold=True, font_size=dp(14), size_hint_y=None, height=dp(24), halign="left")
         card.add_widget(self.counter)
         self.metadata.bind(text=self._update_count)
         self.code.bind(text=self._update_count)
@@ -1195,6 +1237,8 @@ class SignScreen(Screen):
         self.result = CopyableText(text="", color=GREEN_BR, font_size=dp(12), height=dp(100))
         root.add_widget(self.result)
         root.add_widget(Label())  # flex spacer — keeps header/content pinned to top
+        self.tx_link = LinkButton(text="", color=GREEN_BR, height=dp(28))
+        root.add_widget(self.tx_link)
         root.add_widget(NavBar(current="sign"))
         self.add_widget(root)
 
@@ -1300,6 +1344,9 @@ class SignScreen(Screen):
             f"Metadata: {meta}\n"
             f"Gas limit: {txr['gasLimit']}"
         )
+        if hasattr(self, "tx_link"):
+            self.tx_link.text = f"tx {txh[:22]}… ↗"
+            self.tx_link.url = etherscan_tx(txh)
         show_popup("Sent", f"Transaction submitted.\n{txh[:22]}…")
 
 
@@ -1317,7 +1364,7 @@ class BatchScreen(Screen):
         card.add_widget(SubLabel(text="Addresses", color=TEXT_SEC))
         self.addrs = MultiInput(height=dp(55), hint_text="0xabc...\n0xdef...")
         card.add_widget(self.addrs)
-        card.add_widget(SubLabel(text="Messages (max 64 chars each)", color=TEXT_SEC))
+        card.add_widget(Label(text="Messages (max 64 chars each)", color=TEXT, bold=True, font_size=dp(14), size_hint_y=None, height=dp(24), halign="left"))
         self.msgs = MultiInput(height=dp(55), hint_text="hello\nworld")
         card.add_widget(self.msgs)
         self.info = SubLabel(text="0 pairs", color=TEXT_MUTED)
@@ -1642,13 +1689,13 @@ class PresenceScreen(Screen):
         card.add_widget(LinkButton(
             text=f"{title}  [{st}] ↗",
             url=etherscan_tx(txo) if txo else None,
-            color=GREEN_BR if st == "OPEN" else TEXT,
-            font_size=dp(14),
-            height=dp(28),
+            color=GREEN_BR,
+            font_size=dp(15),
+            height=dp(30),
         ))
         card.add_widget(Label(
             text=f"Poster {short_addr(o.get('signer',''))}  qty={o.get('qty','1')}  ret={o.get('ret') or '—'}",
-            color=TEXT_MUTED, font_size=dp(11), size_hint_y=None, height=dp(18),
+            color=TEXT_SEC, bold=True, font_size=dp(14), size_hint_y=None, height=dp(24),
         ))
         if o.get("accepter"):
             card.add_widget(Label(
@@ -1738,18 +1785,15 @@ class LegacyScreen(Screen):
         self.old_input = BrandInput(hint_text="Old address (0x...)")
         self.old_input.text = "0x1C10e6574ee696f54b21A611a21313E4714628ad"
         card.add_widget(self.old_input)
-        self.old_link = LinkButton(text="Old address on Etherscan ↗", color=BLUE_SOFT, height=dp(26))
-        self.old_link.bind(on_release=lambda *_: open_url(etherscan_address(self.old_input.text.strip())))
-        card.add_widget(self.old_link)
         check_btn = BrandButton(text="CHECK", bg_color=BLUE)
         check_btn.bind(on_release=self.do_check)
         card.add_widget(check_btn)
         root.add_widget(card)
 
         vals = Card()
-        self.lbl_new = SubLabel(text="Connected: —", color=YELLOW)
+        self.lbl_new = LinkButton(text="Connected: —", color=GREEN_BR, height=dp(28))
         self.lbl_new_eff = SubLabel(text="Connected effective: —", color=TEXT)
-        self.lbl_old = SubLabel(text="Old: —", color=TEXT_MUTED)
+        self.lbl_old = LinkButton(text="Old: —", color=GREEN_BR, height=dp(28))
         self.lbl_old_eff = SubLabel(text="Old effective now: —", color=TEXT)
         self.lbl_old_after = SubLabel(text="Old effective after +1: —", color=GREEN_BR)
         for w in (self.lbl_new, self.lbl_new_eff, self.lbl_old, self.lbl_old_eff, self.lbl_old_after):
@@ -1777,9 +1821,12 @@ class LegacyScreen(Screen):
     def on_pre_enter(self, *a):
         app = App.get_running_app()
         if app.private_key:
-            self.lbl_new.text = "Connected: " + short_addr(address_from_private_key(app.private_key))
+            addr = address_from_private_key(app.private_key)
+            self.lbl_new.text = "Connected: " + short_addr(addr) + " ↗"
+            self.lbl_new.url = etherscan_address(addr)
         else:
             self.lbl_new.text = "Connected: (unlock wallet)"
+            self.lbl_new.url = None
 
     def do_check(self, *_):
         old = self.old_input.text.strip()
@@ -1816,11 +1863,13 @@ class LegacyScreen(Screen):
             show_popup("Error", err)
             return
         self._snapshot = snap
-        self.lbl_old.text = "Old: " + short_addr(snap["old"])
+        self.lbl_old.text = "Old: " + short_addr(snap["old"]) + " ↗"
+        self.lbl_old.url = etherscan_address(snap["old"])
         self.lbl_old_eff.text = f"Old effective now: {snap['old_eff']}"
         self.lbl_old_after.text = f"Old effective after +1: {snap['old_eff'] + 1}"
         if snap["new"]:
-            self.lbl_new.text = "Connected: " + short_addr(snap["new"])
+            self.lbl_new.text = "Connected: " + short_addr(snap["new"]) + " ↗"
+            self.lbl_new.url = etherscan_address(snap["new"])
             self.lbl_new_eff.text = f"Connected effective: {snap['new_eff']}"
         self.status.text = "Ready — you can START or FINISH"
         show_popup("Checked", "Ledger values loaded.\nYou can claim this address.")
@@ -1949,7 +1998,7 @@ class GasScreen(Screen):
         prow2.add_widget(self.presence_trust)
         prow2.add_widget(self.presence_push)
         presence_metrics.add_widget(prow2)
-        self.presence_status = LinkButton(text="", color=TEXT_MUTED, height=dp(24))
+        self.presence_status = LinkButton(text="", color=GREEN_BR, height=dp(24))
         presence_metrics.add_widget(self.presence_status)
         root.add_widget(presence_metrics)
 
@@ -2149,7 +2198,6 @@ class SignSubmitScreen(Screen):
                                        size_hint_y=None)
         self.tab1_content.bind(minimum_height=self.tab1_content.setter("height"))
 
-        self.tab1_content.add_widget(SectionLabel(text="1 address · up to 200 message lines", color=TEXT_MUTED))
         sign_card = Card()
         sign_card.add_widget(SectionLabel(text="Address", color=YELLOW))
         self.ss_addr = BrandInput(hint_text="0x…")
@@ -2415,129 +2463,13 @@ class WalletScreen(Screen):
         center_block.add_widget(fp_lbl)
 
         links = [
-            ("MIT license", "https://github.com/Taru8899/69069/blob/main/LICENSE"),
-            ("README.md", "https://github.com/Taru8899/69069/blob/main/README.md"),
             ("sos69069.com", "https://sos69069.com"),
-            ("GitHub", "https://github.com/Taru8899/69069"),
             ("Token on Etherscan", "https://etherscan.io/token/0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A"),
-            ("euc.li/sos69069.eth", "https://euc.li/sos69069.eth"),
-            ("0x1c10…28ad", "https://etherscan.io/address/0x1c10e6574ee696f54b21a611a21313e4714628ad"),
-            ("sos69069.eth", "https://etherscan.io/address/sos69069.eth"),
+            ("SOS 69069 on GitHub", "https://github.com/Taru8899/69069"),
+            ("README.md", "https://github.com/Taru8899/69069/blob/main/README.md"),
+            ("MIT license", "https://github.com/Taru8899/69069/blob/main/LICENSE"),
         ]
         for label, url in links:
-            center_block.add_widget(LinkButton(text=label + " ↗", url=url, color=BLUE_SOFT, height=dp(26)))
-
-        motto = Label(
-            text="Originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
-            color=TEXT,
-            bold=True,
-            font_size=dp(14),
-            halign="center",
-            valign="top",
-            size_hint_y=None,
-            height=dp(72),
-        )
-        motto.bind(size=lambda *a: setattr(motto, "text_size", motto.size))
-        center_block.add_widget(motto)
-        root.add_widget(center_block)
-
-        root.add_widget(Label())
-        root.add_widget(NavBar(current="wallet"))
-        self.add_widget(root)
-
-    def on_pre_enter(self, *a):
-        app = App.get_running_app()
-        self.payer_bar.refresh()
-        lines = []
-        for s in (1, 2):
-            try:
-                addr = ws.peek_address(app.user_data_dir, s)
-            except Exception:
-                addr = None
-            st = "unlocked" if app.keys and app.keys.get(s) else ("saved" if addr else "empty")
-            payer = " ← gas payer" if app.payer_slot == s and app.keys and app.keys.get(s) else ""
-            lines.append(f"Slot {s}: {st}{payer}")
-            if addr:
-                lines.append(f"  {addr}")
-        self.info.text = "\n".join(lines)
-
-
-
-class SOSApp(App):
-    # keys: {1: priv_hex or None, 2: priv_hex or None}
-    keys = None
-    payer_slot = 1
-    last_check_address = None
-    reply_code = None
-    reply_to = None
-    last_batch_results = None
-
-    @property
-    def private_key(self):
-        """Back-compat: primary unlocked key (signer preference = payer or first)."""
-        if not self.keys:
-            return None
-        return self.get_payer_key() or self.keys.get(1) or self.keys.get(2)
-
-    @private_key.setter
-    def private_key(self, value):
-        if self.keys is None:
-            self.keys = {1: None, 2: None}
-        if value is None:
-            self.keys = {1: None, 2: None}
-            return
-        # set into current payer slot
-        self.keys[self.payer_slot] = value
-
-    def get_payer_key(self):
-        if not self.keys:
-            return None
-        return self.keys.get(self.payer_slot) or self.keys.get(1) or self.keys.get(2)
-
-    def get_signer_key(self):
-        """Prefer slot 1 for EIP-712 signing if both unlocked, else any."""
-        if not self.keys:
-            return None
-        return self.keys.get(1) or self.keys.get(2) or self.get_payer_key()
-
-    def cycle_payer_slot(self):
-        if not self.keys:
-            return
-        other = 2 if self.payer_slot == 1 else 1
-        if self.keys.get(other):
-            self.payer_slot = other
-
-    def logout(self):
-        self.keys = {1: None, 2: None}
-        self.payer_slot = 1
-        if getattr(self, "sm", None):
-            self.sm.current = "unlock"
-
-    def build(self):
-
-        os.makedirs(self.user_data_dir, exist_ok=True)
-        sm = ScreenManager()
-        sm.add_widget(LoadingScreen(name="loading"))
-        sm.add_widget(WelcomeScreen(name="welcome"))
-        sm.add_widget(CreateWalletScreen(name="create"))
-        sm.add_widget(ImportWalletScreen(name="import"))
-        sm.add_widget(UnlockScreen(name="unlock"))
-        sm.add_widget(CheckScreen(name="check"))
-        sm.add_widget(MessagesScreen(name="messages"))
-        sm.add_widget(SignScreen(name="sign"))
-        sm.add_widget(BatchScreen(name="batch"))
-        sm.add_widget(PresenceScreen(name="presence"))
-        sm.add_widget(LegacyScreen(name="legacy"))
-        sm.add_widget(GasScreen(name="gas"))
-        sm.add_widget(SignSubmitScreen(name="ss"))
-        sm.add_widget(WalletScreen(name="wallet"))
-        sm.current = "loading"
-        self.sm = sm
-        return sm
-
-    def go_to_wallet_screen(self, address):
-        self.sm.current = "sign"
-
-
-if __name__ == "__main__":
-    SOSApp().run()
+            center_block.add_widget(LinkButton(
+                text=label + " ↗", url=url, color=GREEN_BR, height=dp(28), halign="center",
+            ))
