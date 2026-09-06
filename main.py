@@ -13,6 +13,7 @@ from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
 from kivy.clock import Clock
 import os
+import webbrowser
 import re
 import threading
 from datetime import datetime
@@ -24,6 +25,26 @@ import tx as txmod
 
 CHAIN_ID = 1
 MAX_META = 64
+
+
+def get_app_version() -> str:
+    """Read version from buildozer.spec (single source of truth)."""
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(base, "buildozer.spec")
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("version") and "=" in line:
+                    val = line.split("=", 1)[1].strip()
+                    if val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    elif val.startswith("'") and val.endswith("'"):
+                        val = val[1:-1]
+                    return val
+    except Exception:
+        pass
+    return "0.0.0.0.0"
 
 # Brand colors
 BG          = get_color_from_hex("#0a0e0b")
@@ -57,6 +78,45 @@ def short_addr(a: str) -> str:
     if not a or len(a) < 12:
         return a or "—"
     return a[:6] + "…" + a[-4:]
+
+
+
+def open_url(url: str):
+    try:
+        webbrowser.open(str(url))
+    except Exception:
+        pass
+
+
+def etherscan_address(addr: str) -> str:
+    return "https://etherscan.io/address/" + (addr or "").strip()
+
+
+def etherscan_tx(txh: str) -> str:
+    h = (txh or "").strip()
+    if h and not h.startswith("0x"):
+        h = "0x" + h
+    return "https://etherscan.io/tx/" + h
+
+
+class LinkButton(Button):
+    """Tappable link-style control."""
+    def __init__(self, text="", url=None, color=None, font_size=None,
+                 height=None, **kwargs):
+        super().__init__(**kwargs)
+        self.text = text
+        self.background_normal = ""
+        self.background_down = ""
+        self.background_color = (0, 0, 0, 0)
+        self.color = color or BLUE_SOFT
+        self.bold = True
+        self.font_size = font_size or dp(13)
+        self.size_hint_y = None
+        self.height = height or dp(28)
+        self.halign = "left"
+        self.url = url
+        self.bind(size=lambda *a: setattr(self, "text_size", (self.width, None)))
+        self.bind(on_release=lambda *_: open_url(self.url) if self.url else None)
 
 
 def fmt_time(ts: int) -> str:
@@ -132,6 +192,7 @@ class MultiInput(TextInput):
         self.font_size = dp(13)
 
 
+
 class TitleLabel(Label):
     def __init__(self, text="", **kwargs):
         super().__init__(**kwargs)
@@ -158,7 +219,7 @@ class SubLabel(Label):
 
 
 class SectionLabel(Label):
-    """Larger bold section titles."""
+    """Larger bold section titles (Create offer, Trends, etc.)."""
     def __init__(self, text="", color=None, **kwargs):
         super().__init__(**kwargs)
         self.text = text
@@ -271,6 +332,7 @@ class PayerBar(BoxLayout):
     def _logout(self, *_):
         app = App.get_running_app()
         app.logout()
+
 
 
 class CopyableText(TextInput):
@@ -576,6 +638,7 @@ class WelcomeScreen(Screen):
         self.add_widget(root)
 
 
+
 class CreateWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -771,6 +834,7 @@ class UnlockScreen(Screen):
         show_popup("Unlocked", f"Slot {self.active_slot} unlocked.\nGas payer set to this wallet.")
 
 
+
 class CheckScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -836,6 +900,8 @@ class CheckScreen(Screen):
             "year": self.win_year, "all": self.win_all,
         }
         mapping[window].background_color = BLUE
+        self.load_trends()
+
 
     def select_year_n(self, *_):
         raw = self.year_input.text.strip()
@@ -850,6 +916,8 @@ class CheckScreen(Screen):
         self._trend_year = year
         for btn in self._all_window_buttons:
             btn.background_color = INPUT_BG
+        self.load_trends()
+
 
     def load_trends(self, *_):
         self.trends_status.text = "Loading messages from the whole contract history…"
@@ -885,10 +953,10 @@ class CheckScreen(Screen):
                 background_color=(0, 0, 0, 0),
                 color=TEXT,
                 bold=True,
-                font_size=dp(16),
+                font_size=dp(19),
                 halign="left",
                 size_hint_y=None,
-                height=dp(36),
+                height=dp(40),
             )
             btn.bind(size=lambda *a, b=btn: setattr(b, "text_size", (b.width, None)))
             btn.bind(on_release=lambda b, w=word: self._open_trend_messages(w))
@@ -897,7 +965,6 @@ class CheckScreen(Screen):
 
 
     def _open_trend_messages(self, word):
-        """Show last 20 messages containing this trend word."""
         self.trends_status.text = f'Messages for "{word}"…'
         self.trends_box.clear_widgets()
         back = BrandButton(text="← BACK TO TRENDS", bg_color=INPUT_BG)
@@ -910,20 +977,22 @@ class CheckScreen(Screen):
             if word.lower() not in meta.lower():
                 continue
             card = Card()
-            ml = Label(text=meta[:120], color=TEXT, bold=True, font_size=dp(14),
-                       size_hint_y=None, height=dp(40), halign="left")
-            ml.bind(size=lambda *a, w=ml: setattr(w, "text_size", (w.width, None)))
-            card.add_widget(ml)
-            card.add_widget(Label(text=short_addr(ev.get("signer", "")), color=YELLOW,
-                                  font_size=dp(12), size_hint_y=None, height=dp(18)))
+            card.add_widget(CopyableText(text=meta[:160], color=TEXT, font_size=dp(14), height=dp(44)))
+            signer = ev.get("signer") or ""
+            card.add_widget(LinkButton(
+                text=short_addr(signer) + " ↗",
+                url=etherscan_address(signer),
+                color=YELLOW,
+            ))
             self.trends_box.add_widget(card)
             shown += 1
             if shown >= 20:
                 break
-        if shown == 0:
-            self.trends_status.text = f'No messages found for "{word}"'
-        else:
-            self.trends_status.text = f'{shown} message(s) for "{word}"'
+        self.trends_status.text = (
+            f'No messages found for "{word}"' if shown == 0
+            else f'{shown} message(s) for "{word}"'
+        )
+
 
 
 class MessagesScreen(Screen):
@@ -1018,45 +1087,35 @@ class MessagesScreen(Screen):
         if not events:
             self.status.text = "No messages with metadata found in recent blocks."
             return
-        self.status.text = f"Showing {len(events)} message(s)"
+        self.status.text = f"{len(events)} message(s)"
         for ev in events:
-            self.list_box.add_widget(self._msg_card(ev))
+            meta = (ev.get("metadata") or "").strip()
+            when = fmt_time(ev.get("timestamp") or 0)
+            card = Card()
+            card.add_widget(CopyableText(text=meta, color=TEXT, font_size=dp(14), height=dp(48)))
+            txh = ev.get("txHash") or ""
+            card.add_widget(LinkButton(
+                text=f"tx {txh[:18]}… · blk {ev.get('blockNumber','')} · {when} ↗",
+                url=etherscan_tx(txh) if txh else None,
+                color=TEXT_MUTED,
+                font_size=dp(12),
+                height=dp(26),
+            ))
+            from_a = ev.get("signer") or ""
+            to_a = ev.get("intendedTo") or ""
+            card.add_widget(CopyableText(
+                text=f"{short_addr(from_a)} → {short_addr(to_a)}",
+                color=YELLOW, font_size=dp(12), height=dp(22),
+            ))
+            code = extract_conv_code(meta) or (
+                txh[2:10].lower() if txh.startswith("0x") and len(txh) >= 10 else ""
+            )
+            if code:
+                rb = BrandButton(text=f"REPLY · {code}", bg_color=BLUE)
+                rb.bind(on_release=lambda b, c=code, a=from_a: self._reply(c, a))
+                card.add_widget(rb)
+            self.list_box.add_widget(card)
 
-    def _msg_card(self, ev):
-        card = Card()
-        meta = (ev.get("metadata") or "").strip()
-        party = ev["signer"] if self.direction == "trust" else ev["intendedTo"]
-        dir_label = "TRUST Received 1 SOS" if self.direction == "trust" else "PUSH Sent 1 SOS"
-        dir_color = GREEN_BR if self.direction == "trust" else ORANGE
-
-        if meta:
-            m = Label(text=meta, color=TEXT, bold=True, font_size=dp(15),
-                      size_hint_y=None, halign="left", valign="top")
-            m.bind(size=lambda *a, w=m: setattr(w, "text_size", (w.width, None)))
-            m.bind(texture_size=lambda *a, w=m: setattr(w, "height", w.texture_size[1]))
-            card.add_widget(m)
-
-        card.add_widget(Label(
-            text=short_addr(party), color=YELLOW, font_size=dp(12),
-            size_hint_y=None, height=dp(18), halign="left",
-        ))
-        when = fmt_time(ev.get("timestamp", 0))
-        card.add_widget(Label(
-            text=f"tx{ev['txHash'][:18]}…  ·  block {ev['blockNumber']}  ·  {when}",
-            color=TEXT_MUTED, font_size=dp(11), size_hint_y=None, height=dp(16),
-        ))
-
-        row = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(8))
-        row.add_widget(Label(text=dir_label, color=dir_color, bold=True,
-                             font_size=dp(12), size_hint_x=0.6, halign="left"))
-        code = extract_conv_code(meta) or (ev["txHash"][2:10].lower() if ev.get("txHash") else "")
-        if code:
-            reply = Button(text="REPLY", background_normal="", background_color=BLUE_SOFT,
-                           color=TEXT, bold=True, font_size=dp(12), size_hint_x=0.4)
-            reply.bind(on_release=lambda b, c=code, p=party: self._reply(c, p))
-            row.add_widget(reply)
-        card.add_widget(row)
-        return card
 
     def _reply(self, code, party):
         app = App.get_running_app()
@@ -1382,6 +1441,7 @@ class BatchScreen(Screen):
         App.get_running_app().last_batch_results = results
 
 
+
 class PresenceScreen(Screen):
     """Create and manage presence offers (O/A/D/X protocol)."""
 
@@ -1390,6 +1450,7 @@ class PresenceScreen(Screen):
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
         root.add_widget(HeaderBar(title="PRES"))
 
+        # Create offer card
         create = Card()
         self.offer_type = BrandInput(hint_text="Type: T (trust) or P (push)")
         self.offer_type.text = "T"
@@ -1548,11 +1609,15 @@ class PresenceScreen(Screen):
 
     def _offer_card(self, o, me):
         card = Card()
-        title = ("PUSH" if o.get("type") == "P" else "TRUST") + f"  #{o.get('id','')[:8]}"
+        txo = o.get("txHash") or ""
         st = o.get("status", "?")
-        card.add_widget(Label(
-            text=f"{title}  [{st}]", color=GREEN_BR if st == "OPEN" else TEXT,
-            bold=True, font_size=dp(13), size_hint_y=None, height=dp(22),
+        title = ("PUSH" if o.get("type") == "P" else "TRUST") + f"  #{o.get('id','')[:8]}"
+        card.add_widget(LinkButton(
+            text=f"{title}  [{st}] ↗",
+            url=etherscan_tx(txo) if txo else None,
+            color=GREEN_BR if st == "OPEN" else TEXT,
+            font_size=dp(14),
+            height=dp(28),
         ))
         card.add_widget(Label(
             text=f"Poster {short_addr(o.get('signer',''))}  qty={o.get('qty','1')}  ret={o.get('ret') or '—'}",
@@ -1630,6 +1695,9 @@ class PresenceScreen(Screen):
         self.load_offers()
 
 
+
+
+
 class LegacyScreen(Screen):
     """Legacy claim: CHECK old address, START / FINISH claim."""
 
@@ -1643,6 +1711,9 @@ class LegacyScreen(Screen):
         self.old_input = BrandInput(hint_text="Old address (0x...)")
         self.old_input.text = "0x1C10e6574ee696f54b21A611a21313E4714628ad"
         card.add_widget(self.old_input)
+        self.old_link = LinkButton(text="Old address on Etherscan ↗", color=BLUE_SOFT, height=dp(26))
+        self.old_link.bind(on_release=lambda *_: open_url(etherscan_address(self.old_input.text.strip())))
+        card.add_widget(self.old_link)
         check_btn = BrandButton(text="CHECK", bg_color=BLUE)
         check_btn.bind(on_release=self.do_check)
         card.add_widget(check_btn)
@@ -1783,6 +1854,9 @@ class LegacyScreen(Screen):
         self.do_check()
 
 
+
+
+
 class GasScreen(Screen):
     """Gas cost panel: Push / Trust / Effective / Total (Etherscan)."""
 
@@ -1848,7 +1922,7 @@ class GasScreen(Screen):
         prow2.add_widget(self.presence_trust)
         prow2.add_widget(self.presence_push)
         presence_metrics.add_widget(prow2)
-        self.presence_status = SubLabel(text="", color=TEXT_MUTED)
+        self.presence_status = LinkButton(text="", color=TEXT_MUTED, height=dp(24))
         presence_metrics.add_widget(self.presence_status)
         root.add_widget(presence_metrics)
 
@@ -1915,6 +1989,8 @@ class GasScreen(Screen):
             self.status.text = err
             show_popup("Error", err)
             return
+        addr = self.addr_input.text.strip()
+        link = etherscan_address(addr)
         self.lbl_eff.text = "Effective: " + self._fmt(
             data["effectiveEth"], data["effectiveUsd"], data["effectiveCount"], "txs")
         self.lbl_trust.text = "Trust: " + self._fmt(
@@ -1924,8 +2000,33 @@ class GasScreen(Screen):
         self.lbl_total.text = "Total: " + self._fmt(
             data["totalEth"], data["totalUsd"],
             data["pushCount"] + data["trustCount"], "txs")
+        # clickable count links under metrics
+        if hasattr(self, "gas_links"):
+            self.gas_links.clear_widgets()
+            for label, n in (
+                ("Effective", data["effectiveCount"]),
+                ("Trust", data["trustCount"]),
+                ("Push", data["pushCount"]),
+                ("Total", data["pushCount"] + data["trustCount"]),
+            ):
+                self.gas_links.add_widget(LinkButton(
+                    text=f"{label}: {n} txs ↗",
+                    url=link,
+                    color=BLUE_SOFT,
+                    font_size=dp(12),
+                    height=dp(24),
+                ))
         price = data.get("ethUsd")
-        self.status.text = f"ETH price: ${price:.0f}" if price else "Done (no USD price)"
+        if price is not None:
+            self.status.text = ""
+            if hasattr(self, "price_link"):
+                self.price_link.text = f"ETH price: {price:.0f} ↗"
+                self.price_link.url = link
+        else:
+            if hasattr(self, "price_link"):
+                self.price_link.text = "Done (no USD price)"
+                self.price_link.url = None
+
 
     def do_presence_check(self, *_):
         addr = self.addr_input.text.strip()
@@ -1955,11 +2056,17 @@ class GasScreen(Screen):
         self.presence_eff.text = f"Effective: {s['effective']}"
         self.presence_trust.text = f"Trust: {s['trust']}"
         self.presence_push.text = f"Push: {s['push']}"
-        self.presence_status.text = "Live on Ethereum Mainnet"
-        App.get_running_app().last_check_address = self.addr_input.text.strip()
+        addr = self.addr_input.text.strip()
+        self.presence_status.text = "Live on Ethereum Mainnet ↗"
+        self.presence_status.url = etherscan_address(addr)
+        App.get_running_app().last_check_address = addr
 
     def presence_use_mine(self, *_):
         self.use_mine()
+
+
+
+
 
 
     def _show_both(self, data, err, pres, pres_err):
@@ -1968,7 +2075,10 @@ class GasScreen(Screen):
             self.presence_eff.text = f"Effective: {pres['effective']}"
             self.presence_trust.text = f"Trust: {pres['trust']}"
             self.presence_push.text = f"Push: {pres['push']}"
-            self.presence_status.text = "Live on Ethereum Mainnet"
+            addr = self.addr_input.text.strip()
+            self.presence_status.text = "Live on Ethereum Mainnet ↗"
+            if hasattr(self.presence_status, "url"):
+                self.presence_status.url = etherscan_address(addr)
         elif pres_err:
             self.presence_status.text = pres_err
         if err:
@@ -2012,13 +2122,13 @@ class SignSubmitScreen(Screen):
                                        size_hint_y=None)
         self.tab1_content.bind(minimum_height=self.tab1_content.setter("height"))
 
-        self.tab1_content.add_widget(SectionLabel(text="1–2 lines used · fields hold up to 200", color=TEXT_MUTED))
+        self.tab1_content.add_widget(SectionLabel(text="1 address · up to 200 message lines", color=TEXT_MUTED))
         sign_card = Card()
-        sign_card.add_widget(SectionLabel(text="Addresses (1 or 2 lines)", color=YELLOW))
-        self.ss_addrs = MultiInput(height=dp(55), hint_text="0xabc...\n0xdef...")
-        sign_card.add_widget(self.ss_addrs)
-        sign_card.add_widget(SectionLabel(text="Metadata messages (1 or 2 lines)", color=YELLOW))
-        self.ss_metas = MultiInput(height=dp(55), hint_text="message one\nmessage two")
+        sign_card.add_widget(SectionLabel(text="Address", color=YELLOW))
+        self.ss_addr = BrandInput(hint_text="0x…")
+        sign_card.add_widget(self.ss_addr)
+        sign_card.add_widget(SectionLabel(text="Messages (one per line, max 200)", color=YELLOW))
+        self.ss_metas = MultiInput(height=dp(120), hint_text="message one\nmessage two\n...")
         sign_card.add_widget(self.ss_metas)
         sbtn = BrandButton(text="SIGN PAYLOAD(S)", bg_color=BLUE)
         sbtn.bind(on_release=self.do_ss_sign)
@@ -2090,28 +2200,25 @@ class SignSubmitScreen(Screen):
             self.manager.current = "unlock"
             return
         try:
-            addrs = self._parse_lines(self.ss_addrs.text)
-            metas = self._parse_lines(self.ss_metas.text)
+            addr = self.ss_addr.text.strip()
+            metas = self._parse_lines(self.ss_metas.text, max_lines=200)
         except ValueError as e:
             show_popup("Error", str(e))
             return
-        if not addrs or not metas:
-            show_popup("Error", "Enter at least one address and one metadata line.")
+        if not (addr.startswith("0x") and len(addr) == 42):
+            show_popup("Error", "Enter one valid 0x address.")
             return
-        if len(addrs) != len(metas):
-            show_popup("Error", f"Line count mismatch: {len(addrs)} addresses vs {len(metas)} messages.")
+        if not metas:
+            show_popup("Error", "Enter at least one message line.")
             return
-        if len(addrs) > 2:
-            show_popup("Error", "Submit 1 or 2 pairs only (fields accept up to 200 lines for pasting).")
+        if len(metas) > 200:
+            show_popup("Error", "Max 200 message lines.")
             return
-        for a in addrs:
-            if not (a.startswith("0x") and len(a) == 42):
-                show_popup("Error", f"Invalid address: {a[:16]}…")
-                return
         for m in metas:
             if utf8_len(m) > 64:
-                show_popup("Error", "Each metadata line max 64 characters.")
+                show_popup("Error", "Each message max 64 characters.")
                 return
+        addrs = [addr] * len(metas)
 
         self.ss_status.text = "Signing…"
 
@@ -2224,6 +2331,7 @@ class SignSubmitScreen(Screen):
         show_popup("Submitted", f"{len(hashes)} tx(s) on-chain:\\n" + "\\n".join(h[:28] + "…" for h in hashes))
 
 
+
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2258,6 +2366,31 @@ class WalletScreen(Screen):
         )
         sos.bind(size=lambda *a: setattr(sos, "text_size", sos.size))
         center_block.add_widget(sos)
+        ver = Label(
+            text="v" + get_app_version(),
+            color=TEXT_MUTED,
+            bold=True,
+            font_size=dp(14),
+            halign="center",
+            size_hint_y=None,
+            height=dp(24),
+        )
+        ver.bind(size=lambda *a: setattr(ver, "text_size", ver.size))
+        center_block.add_widget(ver)
+
+        links = [
+            ("MIT license", "https://github.com/Taru8899/69069/blob/main/LICENSE"),
+            ("README.md", "https://github.com/Taru8899/69069/blob/main/README.md"),
+            ("sos69069.com", "https://sos69069.com"),
+            ("GitHub", "https://github.com/Taru8899/69069"),
+            ("Token on Etherscan", "https://etherscan.io/token/0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A"),
+            ("euc.li/sos69069.eth", "https://euc.li/sos69069.eth"),
+            ("0x1c10…28ad", "https://etherscan.io/address/0x1c10e6574ee696f54b21a611a21313e4714628ad"),
+            ("sos69069.eth", "https://etherscan.io/address/sos69069.eth"),
+        ]
+        for label, url in links:
+            center_block.add_widget(LinkButton(text=label + " ↗", url=url, color=BLUE_SOFT, height=dp(26)))
+
         motto = Label(
             text="Originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
             color=TEXT,
@@ -2291,6 +2424,7 @@ class WalletScreen(Screen):
             if addr:
                 lines.append(f"  {addr}")
         self.info.text = "\n".join(lines)
+
 
 
 class SOSApp(App):
