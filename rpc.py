@@ -3,6 +3,10 @@ JSON-RPC + Etherscan helper for Ethereum view calls and event logs.
 Pure requests + pure_crypto. No web3.py.
 """
 import requests
+import re
+import time
+import datetime
+from collections import Counter
 from pure_crypto import keccak256
 
 # ── Config ───────────────────────────────────────────────────
@@ -422,6 +426,94 @@ def fetch_presence_events(lookback_blocks: int = 30000, max_logs: int = 300) -> 
         if meta[0] in ("O", "A", "D", "X") and "|" in meta:
             events.append(ev)
     return events
+
+
+def fetch_all_metadata_events(max_logs: int = 3000) -> list:
+    """
+    Fetch every SignatureRecorded event on the contract, from the very
+    first block onward, keeping any event that has non-empty metadata —
+    no format filtering (unlike fetch_presence_events, which only keeps
+    the O/A/D/X presence-protocol shape). This is the raw pool used for
+    the Trends word-frequency feature: every message, ever, regardless
+    of what it looks like.
+    """
+    try:
+        logs = etherscan_get_logs(
+            CONTRACT, EVENT_TOPIC0,
+            from_block=0, to_block="latest",
+            page=1, offset=max_logs,
+        )
+    except Exception:
+        def _do(rpc_url):
+            latest = _eth_block_number(rpc_url)
+            params = {
+                "address": CONTRACT,
+                "fromBlock": hex(0),
+                "toBlock": hex(latest),
+                "topics": [EVENT_TOPIC0],
+            }
+            return _eth_get_logs(params, rpc_url)
+        try:
+            logs = call_with_fallback(_do)
+        except Exception:
+            logs = []
+
+    events = []
+    for log in logs:
+        ev = _parse_signature_recorded(log)
+        if not ev:
+            continue
+        meta = (ev.get("metadata") or "").strip()
+        if not meta:
+            continue
+        events.append(ev)
+    return events
+
+
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+
+
+def compute_word_trends(events: list, window: str, year: int | None = None, top_n: int = 25) -> list:
+    """
+    window: one of "24h", "week", "month", "year", "year_n", "all".
+    For "year_n", `year` must be given (e.g. 2025) and only messages
+    from that calendar year (UTC) are counted.
+
+    Every word in every kept message's metadata is counted — no
+    stopword filtering, exactly "all words from all messages" as
+    requested. Returns [(word, count), ...] sorted most-used first.
+    """
+    now = time.time()
+    cutoffs = {
+        "24h": now - 24 * 3600,
+        "week": now - 7 * 24 * 3600,
+        "month": now - 30 * 24 * 3600,
+        "year": now - 365 * 24 * 3600,
+    }
+
+    def keep(ts: int) -> bool:
+        if not ts:
+            return window == "all"  # events with no timestamp only count under "all"
+        if window == "all":
+            return True
+        if window == "year_n":
+            if year is None:
+                return True
+            dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+            return dt.year == year
+        cutoff = cutoffs.get(window)
+        return cutoff is not None and ts >= cutoff
+
+    counter = Counter()
+    for ev in events:
+        ts = ev.get("timestamp", 0)
+        if not keep(ts):
+            continue
+        meta = (ev.get("metadata") or "")
+        for word in _WORD_RE.findall(meta.lower()):
+            counter[word] += 1
+
+    return counter.most_common(top_n)
 
 
 def build_presence_offers(events: list) -> list:

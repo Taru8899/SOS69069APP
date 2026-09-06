@@ -411,6 +411,7 @@ class NavBar(BoxLayout):
             ("sign", "SIGN", GREEN_BR),
             ("ss", "S&S", ORANGE),
             ("gas", "GAS", TEXT_MUTED),
+            ("legacy", "LEGACY", get_color_from_hex("#a78bfa")),
             ("wallet", "KEY", TEXT_MUTED),
         ]
         for name, label, color in items:
@@ -475,7 +476,7 @@ class LoadingScreen(Screen):
         self.add_widget(root)
 
     def on_enter(self, *a):
-        Clock.schedule_once(self._go_next, 1.2)
+        Clock.schedule_once(self._go_next, 5.0)
 
     def _go_next(self, *_):
         app = App.get_running_app()
@@ -804,7 +805,53 @@ class CheckScreen(Screen):
         self.status = SubLabel(text="", color=TEXT_MUTED)
         metrics.add_widget(self.status)
         root.add_widget(metrics)
-        root.add_widget(Label())
+
+        trends_card = Card()
+        trends_card.add_widget(SubLabel(text="Trends — most used words", color=TEXT_MUTED))
+        row_a = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(4))
+        self.win_24h = Button(text="24H", background_normal="", background_color=BLUE,
+                               color=TEXT, bold=True, font_size=dp(12))
+        self.win_week = Button(text="WEEK", background_normal="", background_color=INPUT_BG,
+                                color=TEXT, bold=True, font_size=dp(12))
+        self.win_month = Button(text="MONTH", background_normal="", background_color=INPUT_BG,
+                                 color=TEXT, bold=True, font_size=dp(12))
+        self.win_year = Button(text="YEAR", background_normal="", background_color=INPUT_BG,
+                                color=TEXT, bold=True, font_size=dp(12))
+        self.win_all = Button(text="ALL TIME", background_normal="", background_color=INPUT_BG,
+                               color=TEXT, bold=True, font_size=dp(12))
+        for btn, w in ((self.win_24h, "24h"), (self.win_week, "week"),
+                       (self.win_month, "month"), (self.win_year, "year"),
+                       (self.win_all, "all")):
+            btn.bind(on_release=lambda b, ww=w: self.select_window(ww))
+            row_a.add_widget(btn)
+        trends_card.add_widget(row_a)
+
+        row_b = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        self.year_input = BrandInput(hint_text="Year, e.g. 2025")
+        year_btn = Button(text="YEAR N", background_normal="", background_color=INPUT_BG,
+                           color=TEXT, bold=True, font_size=dp(12), size_hint_x=0.4)
+        year_btn.bind(on_release=self.select_year_n)
+        row_b.add_widget(self.year_input)
+        row_b.add_widget(year_btn)
+        trends_card.add_widget(row_b)
+
+        load_trends_btn = BrandButton(text="LOAD TRENDS", bg_color=GREEN)
+        load_trends_btn.bind(on_release=self.load_trends)
+        trends_card.add_widget(load_trends_btn)
+
+        self.trends_status = SubLabel(text="Select a time window and tap LOAD TRENDS", color=TEXT_MUTED)
+        trends_card.add_widget(self.trends_status)
+        root.add_widget(trends_card)
+
+        self.trends_scroll = ScrollView(size_hint=(1, 1))
+        self.trends_box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(4))
+        self.trends_box.bind(minimum_height=self.trends_box.setter("height"))
+        self.trends_scroll.add_widget(self.trends_box)
+        root.add_widget(self.trends_scroll)
+
+        self._trend_window = "24h"
+        self._trend_year = None
+        self._all_window_buttons = (self.win_24h, self.win_week, self.win_month, self.win_year, self.win_all)
         root.add_widget(NavBar(current="check"))
         self.add_widget(root)
 
@@ -861,6 +908,64 @@ class CheckScreen(Screen):
         self.status.text = "Live on Ethereum Mainnet"
         # remember for Messages screen
         App.get_running_app().last_check_address = self.addr_input.text.strip()
+
+    def select_window(self, window):
+        self._trend_window = window
+        self._trend_year = None
+        self.year_input.text = ""
+        for btn in self._all_window_buttons:
+            btn.background_color = INPUT_BG
+        mapping = {
+            "24h": self.win_24h, "week": self.win_week, "month": self.win_month,
+            "year": self.win_year, "all": self.win_all,
+        }
+        mapping[window].background_color = BLUE
+
+    def select_year_n(self, *_):
+        raw = self.year_input.text.strip()
+        try:
+            year = int(raw)
+            if year < 1970 or year > 9999:
+                raise ValueError()
+        except ValueError:
+            show_popup("Error", "Enter a valid 4-digit year, e.g. 2025.")
+            return
+        self._trend_window = "year_n"
+        self._trend_year = year
+        for btn in self._all_window_buttons:
+            btn.background_color = INPUT_BG
+
+    def load_trends(self, *_):
+        self.trends_status.text = "Loading messages from the whole contract history…"
+        self.trends_box.clear_widgets()
+        window = self._trend_window
+        year = self._trend_year
+
+        def worker():
+            try:
+                events = rpc.fetch_all_metadata_events()
+                trends = rpc.compute_word_trends(events, window, year=year)
+                Clock.schedule_once(lambda dt: self._show_trends(trends, len(events), None), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._show_trends([], 0, str(e)), 0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_trends(self, trends, total_events, err):
+        self.trends_box.clear_widgets()
+        if err:
+            self.trends_status.text = err
+            return
+        if not trends:
+            self.trends_status.text = f"No words found in this window ({total_events} total messages scanned)."
+            return
+        self.trends_status.text = f"Top words ({total_events} total messages scanned)"
+        for rank, (word, count) in enumerate(trends, start=1):
+            row = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(8))
+            row.add_widget(Label(text=f"{rank}. {word}", color=TEXT, bold=True,
+                                  font_size=dp(14), halign="left", size_hint_x=0.7))
+            row.add_widget(Label(text=str(count), color=GREEN_BR, bold=True,
+                                  font_size=dp(14), halign="right", size_hint_x=0.3))
+            self.trends_box.add_widget(row)
 
 
 class MessagesScreen(Screen):
@@ -2082,6 +2187,21 @@ class WalletScreen(Screen):
         logout.bind(on_release=lambda *_: App.get_running_app().logout())
         card.add_widget(logout)
         root.add_widget(card)
+
+        motto = Label(
+            text="SOS 69069 originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
+            color=TEXT,
+            bold=True,
+            font_size=dp(14),
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            height=dp(72),
+        )
+        motto.bind(size=lambda *a: setattr(motto, "text_size", motto.size))
+        motto.padding_x = dp(HeaderBar.LEFT)
+        root.add_widget(motto)
+
         root.add_widget(Label())
         root.add_widget(NavBar(current="wallet"))
         self.add_widget(root)
