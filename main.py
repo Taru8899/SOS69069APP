@@ -46,6 +46,19 @@ def get_app_version() -> str:
         pass
     return "0.0.0.0.0"
 
+
+def get_build_fingerprint() -> str:
+    """SHA-256 of BUILD_FINGERPRINT file (full APK hash written at release), else local source tag."""
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(base, "BUILD_FINGERPRINT")
+        if os.path.isfile(path):
+            with open(path, "r") as f:
+                return f.read().strip().split()[0][:64]
+    except Exception:
+        pass
+    return "unknown"
+
 # Brand colors
 BG          = get_color_from_hex("#0a0e0b")
 CARD_BG     = get_color_from_hex("#141b16")
@@ -2377,6 +2390,15 @@ class WalletScreen(Screen):
         )
         ver.bind(size=lambda *a: setattr(ver, "text_size", ver.size))
         center_block.add_widget(ver)
+        fp = get_build_fingerprint()
+        fp_short = (fp[:12] + "…" + fp[-8:]) if len(fp) >= 24 else fp
+        fp_lbl = CopyableText(
+            text="build " + fp_short,
+            color=TEXT_MUTED,
+            font_size=dp(12),
+            height=dp(28),
+        )
+        center_block.add_widget(fp_lbl)
 
         links = [
             ("MIT license", "https://github.com/Taru8899/69069/blob/main/LICENSE"),

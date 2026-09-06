@@ -4,6 +4,7 @@ package.name = sos69069
 package.domain = org.sos69069
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,txt,md
+source.include_patterns = BUILD_FINGERPRINT
 source.main = main.py
 version = 1.9.8.7.6
 requirements = python3,kivy,requests,urllib3,certifi,chardet,idna
