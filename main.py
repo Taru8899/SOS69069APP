@@ -156,6 +156,20 @@ class SubLabel(Label):
         self.bind(size=lambda *a: setattr(self, "text_size", self.size))
 
 
+class SectionLabel(Label):
+    """Larger bold section titles (Create offer, Trends, etc.)."""
+    def __init__(self, text="", color=None, **kwargs):
+        super().__init__(**kwargs)
+        self.text = text
+        self.color = color or TEXT
+        self.bold = True
+        self.font_size = dp(17)
+        self.size_hint_y = None
+        self.height = dp(30)
+        self.halign = "left"
+        self.bind(size=lambda *a: setattr(self, "text_size", self.size))
+
+
 def _logo_path():
     base = os.path.dirname(os.path.abspath(__file__))
     for name in ("presplash.png", "icon.png", "icon-192.png"):
@@ -405,21 +419,21 @@ class NavBar(BoxLayout):
         self.spacing = dp(4)
         self.padding = [dp(2), 0]
         items = [
-            ("check", "CHECK", BLUE_SOFT),
-            ("messages", "MSGS", GREEN_BR),
+            ("check", "TRUTH", BLUE_SOFT),
+            ("messages", "MSG", GREEN_BR),
             ("sign", "SIGN", GREEN_BR),
-            ("gas", "GAS", TEXT_MUTED),
+            ("gas", "GAS", ORANGE),
             ("presence", "PRES", YELLOW),
             ("batch", "BT", BLUE),
-            ("ss", "S&S", ORANGE),
-            ("legacy", "LSF", get_color_from_hex("#a78bfa")),
-            ("wallet", "KEY", TEXT_MUTED),
+            ("ss", "S&S", get_color_from_hex("#a78bfa")),
+            ("legacy", "LSF", get_color_from_hex("#c084fc")),
+            ("wallet", "ID", TEXT_MUTED),
         ]
         for name, label, color in items:
             btn = Button(
                 text=label, background_normal="",
                 background_color=color if name == current else INPUT_BG,
-                color=TEXT, bold=True, font_size=dp(12), size_hint_x=1,
+                color=TEXT, bold=True, font_size=dp(10), size_hint_x=1,
             )
             btn.bind(on_release=lambda b, n=name: self._go(n))
             self.add_widget(btn)
@@ -762,11 +776,11 @@ class UnlockScreen(Screen):
 class CheckScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
-        root.add_widget(HeaderBar(title="SOS 69069"))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(8))
+        root.add_widget(HeaderBar(title="TRUTH"))
 
         trends_card = Card()
-        trends_card.add_widget(SubLabel(text="Trends — most used words", color=TEXT_MUTED))
+        trends_card.add_widget(SectionLabel(text="Trends — most used words", color=TEXT_MUTED))
         row_a = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(4))
         self.win_24h = Button(text="24H", background_normal="", background_color=BLUE,
                                color=TEXT, bold=True, font_size=dp(12))
@@ -850,38 +864,81 @@ class CheckScreen(Screen):
             try:
                 events = rpc.fetch_all_metadata_events()
                 trends = rpc.compute_word_trends(events, window, year=year)
-                Clock.schedule_once(lambda dt: self._show_trends(trends, len(events), None), 0)
+                Clock.schedule_once(lambda dt: self._show_trends(trends, events, None), 0)
             except Exception as e:
-                Clock.schedule_once(lambda dt: self._show_trends([], 0, str(e)), 0)
+                Clock.schedule_once(lambda dt: self._show_trends([], [], str(e)), 0)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _show_trends(self, trends, total_events, err):
+    def _show_trends(self, trends, events, err):
         self.trends_box.clear_widgets()
+        total_events = len(events) if events else 0
         if err:
             self.trends_status.text = err
             return
         if not trends:
             self.trends_status.text = f"No words found in this window ({total_events} total messages scanned)."
             return
+        self._trend_events = events
         self.trends_status.text = f"Top words ({total_events} total messages scanned)"
-        for rank, (word, count) in enumerate(trends, start=1):
-            row = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(8))
-            row.add_widget(Label(text=f"{rank}. {word}", color=TEXT, bold=True,
-                                  font_size=dp(14), halign="left", size_hint_x=0.7))
-            row.add_widget(Label(text=str(count), color=GREEN_BR, bold=True,
-                                  font_size=dp(14), halign="right", size_hint_x=0.3))
+        for rank, (word, count) in enumerate(trends[:20], start=1):
+            row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8), padding=[0, 0, 0, 0])
+            btn = Button(
+                text=f"{rank}.  {word}   ({count})",
+                background_normal="",
+                background_color=(0, 0, 0, 0),
+                color=TEXT,
+                bold=True,
+                font_size=dp(16),
+                halign="left",
+                size_hint_y=None,
+                height=dp(36),
+            )
+            btn.bind(size=lambda *a, b=btn: setattr(b, "text_size", (b.width, None)))
+            btn.bind(on_release=lambda b, w=word: self._open_trend_messages(w))
+            row.add_widget(btn)
             self.trends_box.add_widget(row)
+
+
+    def _open_trend_messages(self, word):
+        """Show last 20 messages containing this trend word."""
+        self.trends_status.text = f'Messages for "{word}"…'
+        self.trends_box.clear_widgets()
+        back = BrandButton(text="← BACK TO TRENDS", bg_color=INPUT_BG)
+        back.bind(on_release=lambda *_: self.load_trends())
+        self.trends_box.add_widget(back)
+        events = getattr(self, "_trend_events", []) or []
+        shown = 0
+        for ev in events:
+            meta = (ev.get("metadata") or "")
+            if word.lower() not in meta.lower():
+                continue
+            card = Card()
+            ml = Label(text=meta[:120], color=TEXT, bold=True, font_size=dp(14),
+                       size_hint_y=None, height=dp(40), halign="left")
+            ml.bind(size=lambda *a, w=ml: setattr(w, "text_size", (w.width, None)))
+            card.add_widget(ml)
+            card.add_widget(Label(text=short_addr(ev.get("signer", "")), color=YELLOW,
+                                  font_size=dp(12), size_hint_y=None, height=dp(18)))
+            self.trends_box.add_widget(card)
+            shown += 1
+            if shown >= 20:
+                break
+        if shown == 0:
+            self.trends_status.text = f'No messages found for "{word}"'
+        else:
+            self.trends_status.text = f'{shown} message(s) for "{word}"'
+
 
 
 class MessagesScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
-        root.add_widget(HeaderBar(title="Messages"))
+        root.add_widget(HeaderBar(title="MSG"))
         self.addr_input = BrandInput(hint_text="0x address to load messages")
         root.add_widget(self.addr_input)
 
-        tabs = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
+        tabs = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(96), spacing=dp(4))
         self.tab_trust = BrandButton(text="TRUST", bg_color=BLUE)
         self.tab_push = BrandButton(text="PUSH", bg_color=INPUT_BG)
         self.tab_trust.bind(on_release=lambda *_: self.switch_tab("trust"))
@@ -890,14 +947,14 @@ class MessagesScreen(Screen):
         tabs.add_widget(self.tab_push)
         root.add_widget(tabs)
 
-        row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
-        load = BrandButton(text="LOAD", bg_color=GREEN)
-        load.bind(on_release=self.load_messages)
+        actions = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(96), spacing=dp(4))
         mine = BrandButton(text="MINE", bg_color=INPUT_BG)
         mine.bind(on_release=self.use_mine)
-        row.add_widget(load)
-        row.add_widget(mine)
-        root.add_widget(row)
+        load = BrandButton(text="LOAD", bg_color=GREEN)
+        load.bind(on_release=self.load_messages)
+        actions.add_widget(mine)
+        actions.add_widget(load)
+        root.add_widget(actions)
 
         self.status = SubLabel(text="Enter address and tap LOAD", color=TEXT_MUTED)
         root.add_widget(self.status)
@@ -1020,7 +1077,7 @@ class SignScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
-        root.add_widget(HeaderBar(title="Sign Presence"))
+        root.add_widget(HeaderBar(title="SIGN"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
         self.my_lbl = SubLabel(text="", color=YELLOW)
@@ -1030,7 +1087,8 @@ class SignScreen(Screen):
         card = Card()
         self.recipient = BrandInput(hint_text="Recipient address (0x...)")
         card.add_widget(self.recipient)
-        self.payload = BrandInput(hint_text="Payload hash (optional 0x...)")
+        self.payload = BrandInput(hint_text="Payload hash (editable)")
+        self.payload.text = "0x" + os.urandom(32).hex()
         card.add_widget(self.payload)
         self.code = BrandInput(hint_text="Conversation code (8 hex, optional)")
         card.add_widget(self.code)
@@ -1167,7 +1225,7 @@ class BatchScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
-        root.add_widget(HeaderBar(title="Batch Sign"))
+        root.add_widget(HeaderBar(title="BT"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
         root.add_widget(SubLabel(text="One address and one message per line", color=TEXT_MUTED))
@@ -1330,11 +1388,11 @@ class PresenceScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
-        root.add_widget(HeaderBar(title="Presence"))
+        root.add_widget(HeaderBar(title="PRES"))
 
         # Create offer card
         create = Card()
-        create.add_widget(SubLabel(text="Create offer", color=TEXT_SEC))
+        create.add_widget(SectionLabel(text="Create offer", color=TEXT_SEC))
         self.offer_type = BrandInput(hint_text="Type: T (trust) or P (push)")
         self.offer_type.text = "T"
         create.add_widget(self.offer_type)
@@ -1366,6 +1424,7 @@ class PresenceScreen(Screen):
         self.filter_btns = filt
         root.add_widget(filt)
 
+        root.add_widget(Label(size_hint_y=None, height=dp(10)))  # gap under filter row
         load_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
         load_btn = BrandButton(text="LOAD OFFERS", bg_color=BLUE)
         load_btn.bind(on_release=self.load_offers)
@@ -1587,7 +1646,7 @@ class LegacyScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        root.add_widget(HeaderBar(title="Legacy"))
+        root.add_widget(HeaderBar(title="LSF"))
         root.add_widget(SubLabel(text="Claim by signing +1 to an old address", color=TEXT_MUTED))
 
         card = Card()
@@ -1742,8 +1801,8 @@ class GasScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        root.add_widget(HeaderBar(title="Gas Costs"))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(6))
+        root.add_widget(HeaderBar(title="GAS"))
         root.add_widget(SubLabel(text="ETH spent on Push / Trust / Effective", color=TEXT_MUTED))
 
         card = Card()
@@ -1760,7 +1819,7 @@ class GasScreen(Screen):
             pass
         card.add_widget(self.api_key_input)
         row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
-        b1 = BrandButton(text="CALCULATE", bg_color=ORANGE)
+        b1 = BrandButton(text="CHECK", bg_color=ORANGE)
         b1.bind(on_release=self.do_calc)
         b2 = BrandButton(text="MINE", bg_color=INPUT_BG)
         b2.bind(on_release=self.use_mine)
@@ -1788,7 +1847,7 @@ class GasScreen(Screen):
         res.add_widget(self.status)
         root.add_widget(res)
 
-        root.add_widget(SubLabel(text="Check Presence", color=TEXT_MUTED))
+        root.add_widget(SectionLabel(text="Check Presence", color=TEXT_MUTED))
         presence_card = Card()
         self.presence_addr_input = BrandInput(hint_text="0x address")
         presence_card.add_widget(self.presence_addr_input)
@@ -1948,7 +2007,7 @@ class SignSubmitScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(6))
-        root.add_widget(HeaderBar(title="Sign & Submit"))
+        root.add_widget(HeaderBar(title="S&S"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
 
@@ -1971,13 +2030,13 @@ class SignSubmitScreen(Screen):
                                        size_hint_y=None)
         self.tab1_content.bind(minimum_height=self.tab1_content.setter("height"))
 
-        self.tab1_content.add_widget(SubLabel(text="1–2 lines used · fields hold up to 200", color=TEXT_MUTED))
+        self.tab1_content.add_widget(SectionLabel(text="1–2 lines used · fields hold up to 200", color=TEXT_MUTED))
         sign_card = Card()
-        sign_card.add_widget(SubLabel(text="Addresses (1 or 2 lines)", color=YELLOW))
+        sign_card.add_widget(SectionLabel(text="Addresses (1 or 2 lines)", color=YELLOW))
         self.ss_addrs = MultiInput(hint_text="0xabc...\n0xdef...")
         self.ss_addrs.height = dp(70)
         sign_card.add_widget(self.ss_addrs)
-        sign_card.add_widget(SubLabel(text="Metadata messages (1 or 2 lines)", color=YELLOW))
+        sign_card.add_widget(SectionLabel(text="Metadata messages (1 or 2 lines)", color=YELLOW))
         self.ss_metas = MultiInput(hint_text="message one\nmessage two")
         self.ss_metas.height = dp(70)
         sign_card.add_widget(self.ss_metas)
@@ -2001,7 +2060,7 @@ class SignSubmitScreen(Screen):
         self.tab2_content.bind(minimum_height=self.tab2_content.setter("height"))
 
         sub_card = Card()
-        sub_card.add_widget(SubLabel(text="Step 2 — Paste payload(s) & submit", color=ORANGE))
+        sub_card.add_widget(SectionLabel(text="Step 2 — Paste payload(s) & submit", color=ORANGE))
         self.ss_paste = MultiInput(hint_text="Paste signed payload JSON (or JSON array)")
         self.ss_paste.height = dp(72)
         sub_card.add_widget(self.ss_paste)
@@ -2192,7 +2251,7 @@ class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(10))
-        root.add_widget(HeaderBar(title="Wallets"))
+        root.add_widget(HeaderBar(title="ID"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
         self.info = Label(text="", color=TEXT_SEC, font_size=dp(13),
