@@ -511,7 +511,8 @@ def compute_word_trends(events: list, window: str, year: int | None = None, top_
             continue
         meta = (ev.get("metadata") or "")
         for word in _WORD_RE.findall(meta.lower()):
-            counter[word] += 1
+            if len(word) >= 4:
+                counter[word] += 1
 
     return counter.most_common(top_n)
 

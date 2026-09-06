@@ -116,12 +116,13 @@ class BrandInput(TextInput):
 
 
 class MultiInput(TextInput):
-    """Multi-line input for batch addresses / messages."""
+    """Multi-line input for batch addresses / messages. Fixed height; content scrolls inside."""
     def __init__(self, **kwargs):
+        h = kwargs.pop("height", dp(110))
+        kwargs.setdefault("multiline", True)
         super().__init__(**kwargs)
-        self.multiline = True
         self.size_hint_y = None
-        self.height = dp(110)
+        self.height = h
         self.background_normal = ""
         self.background_active = ""
         self.background_color = INPUT_BG
@@ -129,6 +130,7 @@ class MultiInput(TextInput):
         self.cursor_color = BLUE_SOFT
         self.padding = [dp(10), dp(8)]
         self.font_size = dp(13)
+
 
 
 class TitleLabel(Label):
@@ -701,7 +703,7 @@ class UnlockScreen(Screen):
         row = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
         go = BrandButton(text="CONTINUE", bg_color=BLUE_SOFT)
         go.bind(on_release=lambda *_: setattr(self.manager, "current", "sign"))
-        chk = BrandButton(text="CHECK", bg_color=INPUT_BG)
+        chk = BrandButton(text="TRUTH", bg_color=INPUT_BG)
         chk.bind(on_release=lambda *_: setattr(self.manager, "current", "check"))
         row.add_widget(go)
         row.add_widget(chk)
@@ -938,23 +940,24 @@ class MessagesScreen(Screen):
         self.addr_input = BrandInput(hint_text="0x address to load messages")
         root.add_widget(self.addr_input)
 
-        tabs = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(96), spacing=dp(4))
-        self.tab_trust = BrandButton(text="TRUST", bg_color=BLUE)
-        self.tab_push = BrandButton(text="PUSH", bg_color=INPUT_BG)
-        self.tab_trust.bind(on_release=lambda *_: self.switch_tab("trust"))
-        self.tab_push.bind(on_release=lambda *_: self.switch_tab("push"))
-        tabs.add_widget(self.tab_trust)
-        tabs.add_widget(self.tab_push)
-        root.add_widget(tabs)
-
-        actions = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(96), spacing=dp(4))
+        cols = BoxLayout(size_hint_y=None, height=dp(100), spacing=dp(8))
+        left = BoxLayout(orientation="vertical", spacing=dp(4), size_hint_x=0.5)
         mine = BrandButton(text="MINE", bg_color=INPUT_BG)
         mine.bind(on_release=self.use_mine)
         load = BrandButton(text="LOAD", bg_color=GREEN)
         load.bind(on_release=self.load_messages)
-        actions.add_widget(mine)
-        actions.add_widget(load)
-        root.add_widget(actions)
+        left.add_widget(mine)
+        left.add_widget(load)
+        right = BoxLayout(orientation="vertical", spacing=dp(4), size_hint_x=0.5)
+        self.tab_trust = BrandButton(text="TRUST", bg_color=BLUE)
+        self.tab_push = BrandButton(text="PUSH", bg_color=INPUT_BG)
+        self.tab_trust.bind(on_release=lambda *_: self.switch_tab("trust"))
+        self.tab_push.bind(on_release=lambda *_: self.switch_tab("push"))
+        right.add_widget(self.tab_trust)
+        right.add_widget(self.tab_push)
+        cols.add_widget(left)
+        cols.add_widget(right)
+        root.add_widget(cols)
 
         self.status = SubLabel(text="Enter address and tap LOAD", color=TEXT_MUTED)
         root.add_widget(self.status)
@@ -1076,7 +1079,7 @@ class SignScreen(Screen):
     """Single sign with optional reply code."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(8))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(6), dp(10), dp(6)], spacing=dp(6))
         root.add_widget(HeaderBar(title="SIGN"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
@@ -1224,7 +1227,7 @@ class BatchScreen(Screen):
     """Paste many addresses + messages, sign all."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(6), dp(10), dp(6)], spacing=dp(4))
         root.add_widget(HeaderBar(title="BT"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
@@ -1247,11 +1250,13 @@ class BatchScreen(Screen):
         card.add_widget(load)
         root.add_widget(card)
 
+        prev_scroll = ScrollView(size_hint_y=None, height=dp(90))
         self.preview = Label(text="", color=TEXT_SEC, font_size=dp(12),
-                             size_hint_y=None, height=dp(80),
-                             halign="left", valign="top")
-        self.preview.bind(size=lambda *a: setattr(self.preview, "text_size", self.preview.size))
-        root.add_widget(self.preview)
+                             size_hint_y=None, halign="left", valign="top")
+        self.preview.bind(texture_size=lambda *a: setattr(self.preview, "height", max(dp(90), self.preview.texture_size[1])))
+        self.preview.bind(width=lambda *a: setattr(self.preview, "text_size", (self.preview.width, None)))
+        prev_scroll.add_widget(self.preview)
+        root.add_widget(prev_scroll)
 
         btn_row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
         self.sign_btn = BrandButton(text="SIGN ALL", bg_color=INPUT_BG)
@@ -1264,11 +1269,13 @@ class BatchScreen(Screen):
         btn_row.add_widget(self.send_btn)
         root.add_widget(btn_row)
 
+        res_scroll = ScrollView(size_hint_y=None, height=dp(80))
         self.result = Label(text="", color=GREEN_BR, font_size=dp(11),
-                            size_hint_y=None, height=dp(80),
-                            halign="left", valign="top")
-        self.result.bind(size=lambda *a: setattr(self.result, "text_size", self.result.size))
-        root.add_widget(self.result)
+                            size_hint_y=None, halign="left", valign="top")
+        self.result.bind(texture_size=lambda *a: setattr(self.result, "height", max(dp(80), self.result.texture_size[1])))
+        self.result.bind(width=lambda *a: setattr(self.result, "text_size", (self.result.width, None)))
+        res_scroll.add_widget(self.result)
+        root.add_widget(res_scroll)
         root.add_widget(NavBar(current="batch"))
         self.add_widget(root)
         self.pairs = []
@@ -1424,14 +1431,9 @@ class PresenceScreen(Screen):
         self.filter_btns = filt
         root.add_widget(filt)
 
-        root.add_widget(Label(size_hint_y=None, height=dp(10)))  # gap under filter row
-        load_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
-        load_btn = BrandButton(text="LOAD OFFERS", bg_color=BLUE)
-        load_btn.bind(on_release=self.load_offers)
-        load_row.add_widget(load_btn)
-        root.add_widget(load_row)
+        root.add_widget(Label(size_hint_y=None, height=dp(8)))  # gap under filter row
 
-        self.status = SubLabel(text="Tap LOAD OFFERS", color=TEXT_MUTED)
+        self.status = SubLabel(text="Tap a filter to load offers", color=TEXT_MUTED)
         root.add_widget(self.status)
 
         self.scroll = ScrollView(size_hint=(1, 1))
@@ -1460,7 +1462,7 @@ class PresenceScreen(Screen):
         self.filter = name
         for btn in self.filter_btns.children:
             btn.background_color = BLUE if btn.text == name else INPUT_BG
-        self._render()
+        self.load_offers()
 
     def create_offer(self, *_):
         app = App.get_running_app()
@@ -1847,29 +1849,16 @@ class GasScreen(Screen):
         res.add_widget(self.status)
         root.add_widget(res)
 
-        root.add_widget(SectionLabel(text="Check Presence", color=TEXT_MUTED))
-        presence_card = Card()
-        self.presence_addr_input = BrandInput(hint_text="0x address")
-        presence_card.add_widget(self.presence_addr_input)
-        prow = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
-        pb1 = BrandButton(text="CHECK", bg_color=BLUE)
-        pb1.bind(on_release=self.do_presence_check)
-        pb2 = BrandButton(text="MINE", bg_color=INPUT_BG)
-        pb2.bind(on_release=self.presence_use_mine)
-        prow.add_widget(pb1)
-        prow.add_widget(pb2)
-        presence_card.add_widget(prow)
-        root.add_widget(presence_card)
-
+        root.add_widget(SectionLabel(text="Presence metrics", color=TEXT))
         presence_metrics = Card()
         self.presence_eff = Label(text="Effective: —", color=BLUE_SOFT, bold=True,
-                                   font_size=dp(26), size_hint_y=None, height=dp(36), halign="center")
+                                   font_size=dp(22), size_hint_y=None, height=dp(32), halign="left")
         self.presence_eff.bind(size=lambda *a: setattr(self.presence_eff, "text_size", self.presence_eff.size))
         presence_metrics.add_widget(self.presence_eff)
-        prow2 = BoxLayout(size_hint_y=None, height=dp(30), spacing=dp(10))
-        self.presence_trust = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(15), halign="center")
+        prow2 = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(10))
+        self.presence_trust = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(15), halign="left")
         self.presence_trust.bind(size=lambda *a: setattr(self.presence_trust, "text_size", self.presence_trust.size))
-        self.presence_push = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(15), halign="center")
+        self.presence_push = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(15), halign="left")
         self.presence_push.bind(size=lambda *a: setattr(self.presence_push, "text_size", self.presence_push.size))
         prow2.add_widget(self.presence_trust)
         prow2.add_widget(self.presence_push)
@@ -1886,10 +1875,8 @@ class GasScreen(Screen):
         app = App.get_running_app()
         if app.private_key:
             self.addr_input.text = address_from_private_key(app.private_key)
-            self.presence_addr_input.text = address_from_private_key(app.private_key)
         elif getattr(app, "last_check_address", None):
             self.addr_input.text = app.last_check_address
-            self.presence_addr_input.text = app.last_check_address
 
     def use_mine(self, *_):
         app = App.get_running_app()
@@ -1918,11 +1905,17 @@ class GasScreen(Screen):
             lbl.text = lbl.text.split(":")[0] + ": …"
 
         def worker():
+            pres = None
+            pres_err = None
+            try:
+                pres = rpc.stats_of(addr)
+            except Exception as e:
+                pres_err = str(e)
             try:
                 data = rpc.gas_costs_for(addr)
-                Clock.schedule_once(lambda dt: self._show(data, None), 0)
+                Clock.schedule_once(lambda dt: self._show_both(data, None, pres, pres_err), 0)
             except Exception as e:
-                Clock.schedule_once(lambda dt: self._show(None, str(e)), 0)
+                Clock.schedule_once(lambda dt: self._show_both(None, str(e), pres, pres_err), 0)
         threading.Thread(target=worker, daemon=True).start()
 
     def _fmt(self, eth, usd, count, label_count):
@@ -1950,7 +1943,7 @@ class GasScreen(Screen):
         self.status.text = f"ETH price: ${price:.0f}" if price else "Done (no USD price)"
 
     def do_presence_check(self, *_):
-        addr = self.presence_addr_input.text.strip()
+        addr = self.addr_input.text.strip()
         if not (addr.startswith("0x") and len(addr) == 42):
             show_popup("Error", "Enter a valid 0x address.")
             return
@@ -1978,26 +1971,34 @@ class GasScreen(Screen):
         self.presence_trust.text = f"Trust: {s['trust']}"
         self.presence_push.text = f"Push: {s['push']}"
         self.presence_status.text = "Live on Ethereum Mainnet"
-        App.get_running_app().last_check_address = self.presence_addr_input.text.strip()
+        App.get_running_app().last_check_address = self.addr_input.text.strip()
 
     def presence_use_mine(self, *_):
-        app = App.get_running_app()
-        if app.private_key:
-            self.presence_addr_input.text = address_from_private_key(app.private_key)
-        else:
-            try:
-                self.presence_addr_input.text = ws.peek_address(app.user_data_dir)
-            except Exception:
-                show_popup("Info", "Unlock or create a wallet first.")
-                return
-        self.do_presence_check()
+        self.use_mine()
 
 
 
 
+
+
+    def _show_both(self, data, err, pres, pres_err):
+        # presence always attempted
+        if pres and not pres_err:
+            self.presence_eff.text = f"Effective: {pres['effective']}"
+            self.presence_trust.text = f"Trust: {pres['trust']}"
+            self.presence_push.text = f"Push: {pres['push']}"
+            self.presence_status.text = "Live on Ethereum Mainnet"
+        elif pres_err:
+            self.presence_status.text = pres_err
+        if err:
+            self.status.text = err
+            # still keep presence if we got it
+            return
+        self._show(data, None)
 
 
 class SignSubmitScreen(Screen):
+
     """
     Split flow: sign offline, submit with gas wallet.
     Address field: up to 200 lines (use 1 or 2).
@@ -2006,12 +2007,12 @@ class SignSubmitScreen(Screen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(8), dp(12), dp(8)], spacing=dp(6))
+        root = BoxLayout(orientation="vertical", padding=[dp(HeaderBar.LEFT), dp(6), dp(10), dp(6)], spacing=dp(4))
         root.add_widget(HeaderBar(title="S&S"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
 
-        tabs = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        tabs = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
         self.tab1_btn = Button(text="1. SIGN", background_normal="", background_color=BLUE,
                                 color=TEXT, bold=True, font_size=dp(13))
         self.tab2_btn = Button(text="2. SUBMIT", background_normal="", background_color=INPUT_BG,
@@ -2268,19 +2269,32 @@ class WalletScreen(Screen):
         card.add_widget(logout)
         root.add_widget(card)
 
+        center_block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
+        center_block.bind(minimum_height=center_block.setter("height"))
+        sos = Label(
+            text="SOS 69069",
+            color=TEXT,
+            bold=True,
+            font_size=dp(22),
+            halign="center",
+            size_hint_y=None,
+            height=dp(36),
+        )
+        sos.bind(size=lambda *a: setattr(sos, "text_size", sos.size))
+        center_block.add_widget(sos)
         motto = Label(
             text="Originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
             color=TEXT,
             bold=True,
             font_size=dp(14),
-            halign="left",
+            halign="center",
             valign="top",
             size_hint_y=None,
             height=dp(72),
         )
         motto.bind(size=lambda *a: setattr(motto, "text_size", motto.size))
-        motto.padding_x = dp(HeaderBar.LEFT)
-        root.add_widget(motto)
+        center_block.add_widget(motto)
+        root.add_widget(center_block)
 
         root.add_widget(Label())
         root.add_widget(NavBar(current="wallet"))
