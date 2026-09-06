@@ -116,9 +116,9 @@ class BrandInput(TextInput):
 
 
 class MultiInput(TextInput):
-    """Multi-line input for batch addresses / messages. Fixed height; content scrolls inside."""
+    """Multi-line input; fixed height, scrolls internally when content is longer."""
     def __init__(self, **kwargs):
-        h = kwargs.pop("height", dp(110))
+        h = kwargs.pop("height", dp(55))
         kwargs.setdefault("multiline", True)
         super().__init__(**kwargs)
         self.size_hint_y = None
@@ -130,7 +130,6 @@ class MultiInput(TextInput):
         self.cursor_color = BLUE_SOFT
         self.padding = [dp(10), dp(8)]
         self.font_size = dp(13)
-
 
 
 class TitleLabel(Label):
@@ -159,7 +158,7 @@ class SubLabel(Label):
 
 
 class SectionLabel(Label):
-    """Larger bold section titles (Create offer, Trends, etc.)."""
+    """Larger bold section titles."""
     def __init__(self, text="", color=None, **kwargs):
         super().__init__(**kwargs)
         self.text = text
@@ -174,11 +173,11 @@ class SectionLabel(Label):
 
 def _logo_path():
     base = os.path.dirname(os.path.abspath(__file__))
-    for name in ("presplash.png", "icon.png", "icon-192.png"):
+    for name in ("icon.png", "logo_smooth.png", "icon-192.png", "presplash.png"):
         path = os.path.join(base, name)
         if os.path.isfile(path):
             return path
-    return "presplash.png"
+    return "icon.png"
 
 
 class HeaderBar(BoxLayout):
@@ -222,7 +221,7 @@ class PayerBar(BoxLayout):
         self.size_hint_y = None
         self.height = dp(52)
         self.spacing = dp(2)
-        self.padding = [HeaderBar.LEFT, 0, dp(8), 0]
+        self.padding = [dp(HeaderBar.LEFT), 0, dp(8), 0]
         self.addr_lbl = Label(
             text="Gas payer: —",
             color=YELLOW,
@@ -272,7 +271,6 @@ class PayerBar(BoxLayout):
     def _logout(self, *_):
         app = App.get_running_app()
         app.logout()
-
 
 
 class CopyableText(TextInput):
@@ -578,7 +576,6 @@ class WelcomeScreen(Screen):
         self.add_widget(root)
 
 
-
 class CreateWalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -774,7 +771,6 @@ class UnlockScreen(Screen):
         show_popup("Unlocked", f"Slot {self.active_slot} unlocked.\nGas payer set to this wallet.")
 
 
-
 class CheckScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -782,7 +778,6 @@ class CheckScreen(Screen):
         root.add_widget(HeaderBar(title="TRUTH"))
 
         trends_card = Card()
-        trends_card.add_widget(SectionLabel(text="Trends — most used words", color=TEXT_MUTED))
         row_a = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(4))
         self.win_24h = Button(text="24H", background_normal="", background_color=BLUE,
                                color=TEXT, bold=True, font_size=dp(12))
@@ -929,7 +924,6 @@ class CheckScreen(Screen):
             self.trends_status.text = f'No messages found for "{word}"'
         else:
             self.trends_status.text = f'{shown} message(s) for "{word}"'
-
 
 
 class MessagesScreen(Screen):
@@ -1235,10 +1229,10 @@ class BatchScreen(Screen):
 
         card = Card()
         card.add_widget(SubLabel(text="Addresses", color=TEXT_SEC))
-        self.addrs = MultiInput(hint_text="0xabc...\n0xdef...")
+        self.addrs = MultiInput(height=dp(55), hint_text="0xabc...\n0xdef...")
         card.add_widget(self.addrs)
         card.add_widget(SubLabel(text="Messages (max 64 chars each)", color=TEXT_SEC))
-        self.msgs = MultiInput(hint_text="hello\nworld")
+        self.msgs = MultiInput(height=dp(55), hint_text="hello\nworld")
         card.add_widget(self.msgs)
         self.info = SubLabel(text="0 pairs", color=TEXT_MUTED)
         card.add_widget(self.info)
@@ -1388,7 +1382,6 @@ class BatchScreen(Screen):
         App.get_running_app().last_batch_results = results
 
 
-
 class PresenceScreen(Screen):
     """Create and manage presence offers (O/A/D/X protocol)."""
 
@@ -1397,9 +1390,7 @@ class PresenceScreen(Screen):
         root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(6))
         root.add_widget(HeaderBar(title="PRES"))
 
-        # Create offer card
         create = Card()
-        create.add_widget(SectionLabel(text="Create offer", color=TEXT_SEC))
         self.offer_type = BrandInput(hint_text="Type: T (trust) or P (push)")
         self.offer_type.text = "T"
         create.add_widget(self.offer_type)
@@ -1639,9 +1630,6 @@ class PresenceScreen(Screen):
         self.load_offers()
 
 
-
-
-
 class LegacyScreen(Screen):
     """Legacy claim: CHECK old address, START / FINISH claim."""
 
@@ -1795,9 +1783,6 @@ class LegacyScreen(Screen):
         self.do_check()
 
 
-
-
-
 class GasScreen(Screen):
     """Gas cost panel: Push / Trust / Effective / Total (Etherscan)."""
 
@@ -1849,16 +1834,16 @@ class GasScreen(Screen):
         res.add_widget(self.status)
         root.add_widget(res)
 
-        root.add_widget(SectionLabel(text="Presence metrics", color=TEXT))
+        root.add_widget(SectionLabel(text="Check presence", color=TEXT))
         presence_metrics = Card()
         self.presence_eff = Label(text="Effective: —", color=BLUE_SOFT, bold=True,
-                                   font_size=dp(22), size_hint_y=None, height=dp(32), halign="left")
+                                   font_size=dp(22), size_hint_y=None, height=dp(32), halign="center")
         self.presence_eff.bind(size=lambda *a: setattr(self.presence_eff, "text_size", self.presence_eff.size))
         presence_metrics.add_widget(self.presence_eff)
         prow2 = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(10))
         self.presence_trust = Label(text="Trust: —", color=GREEN_BR, bold=True, font_size=dp(15), halign="left")
         self.presence_trust.bind(size=lambda *a: setattr(self.presence_trust, "text_size", self.presence_trust.size))
-        self.presence_push = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(15), halign="left")
+        self.presence_push = Label(text="Push: —", color=ORANGE, bold=True, font_size=dp(15), halign="right")
         self.presence_push.bind(size=lambda *a: setattr(self.presence_push, "text_size", self.presence_push.size))
         prow2.add_widget(self.presence_trust)
         prow2.add_widget(self.presence_push)
@@ -1977,10 +1962,6 @@ class GasScreen(Screen):
         self.use_mine()
 
 
-
-
-
-
     def _show_both(self, data, err, pres, pres_err):
         # presence always attempted
         if pres and not pres_err:
@@ -2034,12 +2015,10 @@ class SignSubmitScreen(Screen):
         self.tab1_content.add_widget(SectionLabel(text="1–2 lines used · fields hold up to 200", color=TEXT_MUTED))
         sign_card = Card()
         sign_card.add_widget(SectionLabel(text="Addresses (1 or 2 lines)", color=YELLOW))
-        self.ss_addrs = MultiInput(hint_text="0xabc...\n0xdef...")
-        self.ss_addrs.height = dp(70)
+        self.ss_addrs = MultiInput(height=dp(55), hint_text="0xabc...\n0xdef...")
         sign_card.add_widget(self.ss_addrs)
         sign_card.add_widget(SectionLabel(text="Metadata messages (1 or 2 lines)", color=YELLOW))
-        self.ss_metas = MultiInput(hint_text="message one\nmessage two")
-        self.ss_metas.height = dp(70)
+        self.ss_metas = MultiInput(height=dp(55), hint_text="message one\nmessage two")
         sign_card.add_widget(self.ss_metas)
         sbtn = BrandButton(text="SIGN PAYLOAD(S)", bg_color=BLUE)
         sbtn.bind(on_release=self.do_ss_sign)
@@ -2053,7 +2032,6 @@ class SignSubmitScreen(Screen):
             height=dp(90),
         )
         self.tab1_content.add_widget(self.payload_box)
-        self.tab1_content.add_widget(Label())
 
         # ---- Tab 2: Submit ----
         self.tab2_content = BoxLayout(orientation="vertical", spacing=dp(6),
@@ -2076,7 +2054,6 @@ class SignSubmitScreen(Screen):
         self.ss_status = CopyableText(text="", color=TEXT_MUTED, height=dp(36))
         sub_card.add_widget(self.ss_status)
         self.tab2_content.add_widget(sub_card)
-        self.tab2_content.add_widget(Label())
 
         root.add_widget(NavBar(current="ss"))
         self.add_widget(root)
@@ -2247,7 +2224,6 @@ class SignSubmitScreen(Screen):
         show_popup("Submitted", f"{len(hashes)} tx(s) on-chain:\\n" + "\\n".join(h[:28] + "…" for h in hashes))
 
 
-
 class WalletScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2315,7 +2291,6 @@ class WalletScreen(Screen):
             if addr:
                 lines.append(f"  {addr}")
         self.info.text = "\n".join(lines)
-
 
 
 class SOSApp(App):
