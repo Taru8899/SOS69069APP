@@ -6,7 +6,10 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,txt,md
 source.include_patterns = BUILD_FINGERPRINT
 source.main = main.py
-version = 1.9.8.7.6
+version = 1.9.8
+android.numeric_version = 19876
+# Display-only version shown in UI (not used by Android package)
+# display_version = 1.9.8.7.6
 requirements = python3,kivy,requests,urllib3,certifi,chardet,idna
 orientation = portrait
 fullscreen = 0

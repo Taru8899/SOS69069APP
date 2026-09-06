@@ -27,24 +27,37 @@ CHAIN_ID = 1
 MAX_META = 64
 
 
+
+
+
+
+
+# Android package version is 1.9.8 / code 19876 in buildozer.spec.
+# UI shows the longer display version for users.
+APP_DISPLAY_VERSION = "1.9.8.7.6"
+
+
 def get_app_version() -> str:
-    """Read version from buildozer.spec (single source of truth)."""
+    """User-facing version (display)."""
+    return APP_DISPLAY_VERSION
+
+
+def get_package_version() -> str:
+    """Version string from buildozer.spec (Android versionName)."""
     try:
         base = os.path.dirname(os.path.abspath(__file__))
         path = os.path.join(base, "buildozer.spec")
         with open(path, "r") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("version") and "=" in line:
+                if line.startswith("version") and "=" in line and "numeric" not in line:
                     val = line.split("=", 1)[1].strip()
-                    if val.startswith('"') and val.endswith('"'):
-                        val = val[1:-1]
-                    elif val.startswith("'") and val.endswith("'"):
+                    if len(val) >= 2 and val[0] in ("'", '"') and val[-1] == val[0]:
                         val = val[1:-1]
                     return val
     except Exception:
         pass
-    return "0.0.0.0.0"
+    return "1.9.8"
 
 
 def get_build_fingerprint() -> str:
@@ -553,6 +566,7 @@ class LoadingScreen(Screen):
         for text, sz, col, h in (
             ("Loading ...", dp(18), TEXT, dp(30)),
             ("SOS 69069", dp(16), TEXT, dp(28)),
+            ("v" + get_app_version(), dp(13), TEXT_MUTED, dp(24)),
             ("Activity and Signatures", dp(15), TEXT_SEC, dp(28)),
         ):
             lbl = Label(
