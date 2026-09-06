@@ -129,6 +129,7 @@ class LinkButton(Button):
     """Tappable green link-style control (all app links)."""
     def __init__(self, text="", url=None, color=None, font_size=None,
                  height=None, halign="left", **kwargs):
+        kwargs.pop("halign", None)
         super().__init__(**kwargs)
         self.text = text
         self.background_normal = ""
@@ -139,9 +140,15 @@ class LinkButton(Button):
         self.font_size = font_size or dp(13)
         self.size_hint_y = None
         self.height = height or dp(28)
-        self.halign = halign
+        try:
+            self.halign = halign
+        except Exception:
+            pass
         self.url = url
-        self.bind(size=lambda *a: setattr(self, "text_size", (self.width, None)))
+        try:
+            self.bind(size=lambda *a: setattr(self, "text_size", (self.width, None)))
+        except Exception:
+            pass
         self.bind(on_release=lambda *_: open_url(self.url) if self.url else None)
 
 
@@ -260,11 +267,25 @@ class SectionLabel(Label):
 
 def _logo_path():
     base = os.path.dirname(os.path.abspath(__file__))
-    for name in ("icon.png", "logo_smooth.png", "icon-192.png", "presplash.png"):
+    for name in ("icon.png", "logo_smooth.png", "icon-192.png", "presplash.png", "sos69069.png"):
         path = os.path.join(base, name)
         if os.path.isfile(path):
             return path
-    return "icon.png"
+    return ""
+
+
+def _logo_image(size_dp=40):
+    src = _logo_path()
+    if not src:
+        return Label(text="SOS", color=GREEN_BR, bold=True, font_size=dp(14),
+                     size_hint=(None, None), size=(dp(size_dp), dp(size_dp)))
+    return Image(
+        source=src,
+        size_hint=(None, None),
+        size=(dp(size_dp), dp(size_dp)),
+        allow_stretch=True,
+        keep_ratio=True,
+    )
 
 
 class HeaderBar(BoxLayout):
@@ -279,14 +300,7 @@ class HeaderBar(BoxLayout):
         self.height = dp(52)
         self.spacing = dp(10)
         self.padding = [dp(HeaderBar.LEFT), dp(HeaderBar.TOP), dp(8), dp(4)]
-        logo = Image(
-            source=_logo_path(),
-            size_hint=(None, None),
-            size=(dp(40), dp(40)),
-            allow_stretch=True,
-            keep_ratio=True,
-        )
-        self.add_widget(logo)
+        self.add_widget(_logo_image(40))
         lbl = Label(
             text=title,
             color=TEXT,
@@ -338,7 +352,12 @@ class PayerBar(BoxLayout):
 
     def refresh(self):
         app = App.get_running_app()
-        payer = app.get_payer_key()
+        if app is None or not hasattr(app, "get_payer_key"):
+            return
+        try:
+            payer = app.get_payer_key()
+        except Exception:
+            payer = None
         if payer:
             try:
                 self.addr_lbl.text = "Gas payer: " + address_from_private_key(payer)
@@ -346,7 +365,10 @@ class PayerBar(BoxLayout):
                 self.addr_lbl.text = "Gas payer: (error)"
         else:
             self.addr_lbl.text = "Gas payer: (locked — unlock a wallet)"
-        n = sum(1 for k in (app.keys or {}).values() if k)
+        try:
+            n = sum(1 for k in (app.keys or {}).values() if k)
+        except Exception:
+            n = 0
         self.pick_btn.disabled = n < 2
         self.pick_btn.opacity = 1 if n >= 2 else 0.4
 
@@ -552,14 +574,7 @@ class LoadingScreen(Screen):
         block.bind(minimum_height=block.setter("height"))
         logo_row = BoxLayout(size_hint_y=None, height=dp(128))
         logo_row.add_widget(Label())
-        logo = Image(
-            source=_logo_path(),
-            size_hint=(None, None),
-            size=(dp(128), dp(128)),
-            allow_stretch=True,
-            keep_ratio=True,
-        )
-        logo_row.add_widget(logo)
+        logo_row.add_widget(_logo_image(128))
         logo_row.add_widget(Label())
         block.add_widget(logo_row)
 
@@ -584,11 +599,20 @@ class LoadingScreen(Screen):
         Clock.schedule_once(self._go_next, 5.0)
 
     def _go_next(self, *_):
-        app = App.get_running_app()
-        if ws.wallet_exists(app.user_data_dir):
-            self.manager.current = "unlock"
-        else:
-            self.manager.current = "welcome"
+        try:
+            app = App.get_running_app()
+            has_wallet = False
+            try:
+                has_wallet = bool(ws.wallet_exists(app.user_data_dir))
+            except Exception:
+                has_wallet = False
+            target = "unlock" if has_wallet else "welcome"
+            if target in self.manager.screen_names:
+                self.manager.current = target
+            elif "welcome" in self.manager.screen_names:
+                self.manager.current = "welcome"
+        except Exception as e:
+            print("LoadingScreen._go_next error:", e)
 
 
 class WelcomeScreen(Screen):
@@ -600,18 +624,9 @@ class WelcomeScreen(Screen):
         # Centered logo block
         center = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(12))
         center.bind(minimum_height=center.setter("height"))
-        logo = Image(
-            source=_logo_path(),
-            size_hint=(None, None),
-            size=(dp(120), dp(120)),
-            allow_stretch=True,
-            keep_ratio=True,
-            pos_hint={"center_x": 0.5},
-        )
-        # wrap logo to center horizontally
         logo_row = BoxLayout(size_hint_y=None, height=dp(120))
         logo_row.add_widget(Label())  # left flex
-        logo_row.add_widget(logo)
+        logo_row.add_widget(_logo_image(120))
         logo_row.add_widget(Label())  # right flex
         center.add_widget(logo_row)
 
@@ -900,7 +915,7 @@ class CheckScreen(Screen):
         load_trends_btn.bind(on_release=self.load_trends)
         trends_card.add_widget(load_trends_btn)
 
-        self.trends_status = SubLabel(text="Select a time window and tap LOAD TRENDS", color=TEXT_MUTED)
+        self.trends_status = CopyableText(text="Select a time window and tap LOAD TRENDS", color=TEXT_MUTED, height=dp(28))
         trends_card.add_widget(self.trends_status)
         root.add_widget(trends_card)
 
@@ -1077,7 +1092,7 @@ class MessagesScreen(Screen):
         cols.add_widget(right)
         root.add_widget(cols)
 
-        self.status = SubLabel(text="Enter address and tap LOAD", color=TEXT_MUTED)
+        self.status = CopyableText(text="Enter address and tap LOAD", color=TEXT_MUTED, height=dp(28))
         root.add_widget(self.status)
 
         self.scroll = ScrollView(size_hint=(1, 1))
@@ -1559,7 +1574,7 @@ class PresenceScreen(Screen):
 
         root.add_widget(Label(size_hint_y=None, height=dp(8)))  # gap under filter row
 
-        self.status = SubLabel(text="Tap a filter to load offers", color=TEXT_MUTED)
+        self.status = CopyableText(text="Tap a filter to load offers", color=TEXT_MUTED, height=dp(28))
         root.add_widget(self.status)
 
         self.scroll = ScrollView(size_hint=(1, 1))
@@ -1809,7 +1824,7 @@ class LegacyScreen(Screen):
         row.add_widget(self.start_btn)
         row.add_widget(self.finish_btn)
         actions.add_widget(row)
-        self.status = SubLabel(text="", color=TEXT_MUTED)
+        self.status = CopyableText(text="", color=TEXT_MUTED, height=dp(36))
         actions.add_widget(self.status)
         root.add_widget(actions)
 
@@ -2401,9 +2416,9 @@ class SignSubmitScreen(Screen):
             self.ss_status.text = err
             show_popup("Error", err)
             return
-        text = "\\n".join(hashes)
+        text = "\n".join(hashes)
         self.ss_status.text = text
-        show_popup("Submitted", f"{len(hashes)} tx(s) on-chain:\\n" + "\\n".join(h[:28] + "…" for h in hashes))
+        show_popup("Submitted", f"{len(hashes)} tx(s) on-chain:\n" + "\n".join(h[:28] + "…" for h in hashes))
 
 
 
@@ -2414,10 +2429,7 @@ class WalletScreen(Screen):
         root.add_widget(HeaderBar(title="ID"))
         self.payer_bar = PayerBar()
         root.add_widget(self.payer_bar)
-        self.info = Label(text="", color=TEXT_SEC, font_size=dp(13),
-                          size_hint_y=None, height=dp(120),
-                          halign="left", valign="top")
-        self.info.bind(size=lambda *a: setattr(self.info, "text_size", self.info.size))
+        self.info = CopyableText(text="", color=TEXT_SEC, font_size=dp(13), height=dp(120))
         root.add_widget(self.info)
         card = Card()
         unlock = BrandButton(text="MANAGE / UNLOCK SLOTS", bg_color=BLUE)
@@ -2473,3 +2485,124 @@ class WalletScreen(Screen):
             center_block.add_widget(LinkButton(
                 text=label + " ↗", url=url, color=GREEN_BR, height=dp(28), halign="center",
             ))
+
+        motto = Label(
+            text="Originates from verified Activity and Signatures.\nWhatever you do. SOS records.\nWhatever you do. Continue ...",
+            color=TEXT,
+            bold=True,
+            font_size=dp(14),
+            halign="center",
+            valign="top",
+            size_hint_y=None,
+            height=dp(72),
+        )
+        motto.bind(size=lambda *a: setattr(motto, "text_size", motto.size))
+        center_block.add_widget(motto)
+        root.add_widget(center_block)
+
+        root.add_widget(Label())
+        root.add_widget(NavBar(current="wallet"))
+        self.add_widget(root)
+
+    def on_pre_enter(self, *a):
+        app = App.get_running_app()
+        if hasattr(self, "payer_bar"):
+            self.payer_bar.refresh()
+        lines = []
+        for s in (1, 2):
+            try:
+                addr = ws.peek_address(app.user_data_dir, s)
+            except Exception:
+                addr = None
+            st = "unlocked" if app.keys and app.keys.get(s) else ("saved" if addr else "empty")
+            payer = " <- gas payer" if getattr(app, "payer_slot", 1) == s and app.keys and app.keys.get(s) else ""
+            lines.append(f"Slot {s}: {st}{payer}")
+            if addr:
+                lines.append(f"  {addr}")
+        self.info.text = "\n".join(lines)
+
+
+class SOSApp(App):
+    keys = None
+    payer_slot = 1
+    last_check_address = None
+    reply_code = None
+    reply_to = None
+    last_batch_results = None
+
+    @property
+    def private_key(self):
+        if not self.keys:
+            return None
+        return self.get_payer_key() or self.keys.get(1) or self.keys.get(2)
+
+    @private_key.setter
+    def private_key(self, value):
+        if self.keys is None:
+            self.keys = {1: None, 2: None}
+        if value is None:
+            self.keys = {1: None, 2: None}
+            return
+        self.keys[self.payer_slot] = value
+
+    def get_payer_key(self):
+        if not self.keys:
+            return None
+        return self.keys.get(self.payer_slot) or self.keys.get(1) or self.keys.get(2)
+
+    def get_signer_key(self):
+        if not self.keys:
+            return None
+        return self.keys.get(1) or self.keys.get(2) or self.get_payer_key()
+
+    def cycle_payer_slot(self):
+        if not self.keys:
+            return
+        other = 2 if self.payer_slot == 1 else 1
+        if self.keys.get(other):
+            self.payer_slot = other
+
+    def logout(self):
+        self.keys = {1: None, 2: None}
+        self.payer_slot = 1
+        if getattr(self, "sm", None) is not None:
+            try:
+                self.sm.current = "unlock"
+            except Exception:
+                pass
+
+    def build(self):
+        os.makedirs(self.user_data_dir, exist_ok=True)
+        if self.keys is None:
+            self.keys = {1: None, 2: None}
+        sm = ScreenManager()
+        self.sm = sm
+        for name, cls in (
+            ("loading", LoadingScreen),
+            ("welcome", WelcomeScreen),
+            ("create", CreateWalletScreen),
+            ("import", ImportWalletScreen),
+            ("unlock", UnlockScreen),
+            ("check", CheckScreen),
+            ("messages", MessagesScreen),
+            ("sign", SignScreen),
+            ("batch", BatchScreen),
+            ("presence", PresenceScreen),
+            ("legacy", LegacyScreen),
+            ("gas", GasScreen),
+            ("ss", SignSubmitScreen),
+            ("wallet", WalletScreen),
+        ):
+            try:
+                sm.add_widget(cls(name=name))
+            except Exception as e:
+                print("Screen init failed:", name, e)
+        sm.current = "loading"
+        return sm
+
+    def go_to_wallet_screen(self, address):
+        self.sm.current = "sign"
+
+
+if __name__ == "__main__":
+    SOSApp().run()
