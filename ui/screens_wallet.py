@@ -389,6 +389,10 @@ class WalletScreen(Screen):
         sos.bind(size=lambda *a: setattr(sos, "text_size", sos.size))
         center_block.add_widget(sos)
 
+        human_btn = BrandButton(text="HUMAN IDENTITY", bg_color=BLUE)
+        human_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "human_home"))
+        center_block.add_widget(human_btn)
+
         ver = Label(
             text=format_app_version(),
             color=TEXT_MUTED,

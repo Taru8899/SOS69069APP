@@ -542,6 +542,7 @@ class NavBar(BoxLayout):
         self.spacing = dp(4)
         self.padding = [dp(2), 0]
         items = [
+            ("wallet", "ID", TEXT_MUTED),
             ("check", "TRUTH", BLUE_SOFT),
             ("messages", "MSG", GREEN_BR),
             ("sign", "SIGN", GREEN_BR),
@@ -550,7 +551,6 @@ class NavBar(BoxLayout):
             ("batch", "BT", BLUE),
             ("ss", "S&S", get_color_from_hex("#a78bfa")),
             ("legacy", "LSF", get_color_from_hex("#c084fc")),
-            ("wallet", "ID", TEXT_MUTED),
         ]
         for name, label, color in items:
             btn = Button(
@@ -570,6 +570,8 @@ class NavBar(BoxLayout):
             app.sm.current = "unlock"
         elif name == "wallet":
             app.sm.current = "unlock" if not app.private_key else "wallet"
+        elif name.startswith("human_"):
+            app.sm.current = name
         else:
             app.sm.current = name
 
