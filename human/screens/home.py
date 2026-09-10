@@ -4,6 +4,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.metrics import dp
 from human.theme import PageScroll, HeaderBar, BrandButton, CopyableText
+from kivy.app import App as _App
 from human.screens.nav import HumanNavBar
 from human import texts as T
 from human import identity as ident
@@ -32,6 +33,9 @@ class HumanHomeScreen(Screen):
         note = Label(text=T.HOME_SUB, color=T.TEXT_MUTED, font_size=T.FONT_SMALL, size_hint_y=None, height=dp(48), halign="center")
         note.bind(size=lambda *a: setattr(note, "text_size", note.size))
         mid.add_widget(note)
+        back = BrandButton(text="BACK TO MAIN ID", bg_color=T.INPUT_BG)
+        back.bind(on_release=lambda *_: setattr(self.manager, "current", "wallet"))
+        mid.add_widget(back)
         scroll.add_widget(mid)
         root.add_widget(scroll)
         root.add_widget(HumanNavBar(current="human_home"))
