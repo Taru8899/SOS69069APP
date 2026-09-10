@@ -9,8 +9,8 @@ Coffee me 0x1c10e6574ee696f54b21a611a21313e4714628ad
 
 69069 — it’s a Ledger of Presence with no Assets to hold and no Wallet to drain. Presence written Permanently into the block History, carried Forward by activity, and made Provable through its x2 Legacy Continuity System. An Identityless Record Field. 0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A
 
-SOS 69069 APP, full version for 32 and 64 bit phones
-https://github.com/Taru8899/SOS69069APP/actions/runs/34344782220
+SOS 69069 APP v 1.6.9.0.6.9,all files ZIP
+https://github.com/Taru8899/SOS69069APP/blob/2861eb9cd963bc3ffe7082b8e39fc517e6504634/1.6.9.0.6.9-SOS69069APP.zip
 
 SOS 69069 APP v 1.6.9.0.6.9, light version arm64-v8a
 https://github.com/Taru8899/SOS69069APP/blob/41fd3ef7b5ce527ce75082e37a23203888609aef/1.6.9.0.6.9-sos69069-1.6.9-arm64-v8a-debug.apk
