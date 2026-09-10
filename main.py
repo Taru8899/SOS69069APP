@@ -14,6 +14,16 @@ from ui.screens_pres import PresenceScreen
 from ui.screens_lsf import LegacyScreen
 from ui.screens_gas import GasScreen
 
+from human.screens.home import HumanHomeScreen
+from human.screens.identity import HumanIdentityScreen
+from human.screens.verify import HumanVerifyScreen
+from human.screens.records import HumanRecordsScreen
+from human.screens.attest import HumanAttestScreen
+from human.screens.chain import HumanChainScreen
+from human.screens.pqid import HumanPqidScreen
+from human.screens.loading import HumanLoadingScreen
+
+
 
 class SOSApp(App):
     keys = None
@@ -83,8 +93,17 @@ class SOSApp(App):
             ("presence", PresenceScreen),
             ("legacy", LegacyScreen),
             ("gas", GasScreen),
-            ("ss", SignSubmitScreen),
+                        ("ss", SignSubmitScreen),
             ("wallet", WalletScreen),
+            ("human_home", HumanHomeScreen),
+            ("human_identity", HumanIdentityScreen),
+            ("human_verify", HumanVerifyScreen),
+            ("human_records", HumanRecordsScreen),
+            ("human_attest", HumanAttestScreen),
+            ("human_chain", HumanChainScreen),
+            ("human_pqid", HumanPqidScreen),
+            ("human_loading", HumanLoadingScreen),
+
         ):
             try:
                 sm.add_widget(cls(name=name))
