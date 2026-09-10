@@ -389,8 +389,7 @@ class WalletScreen(Screen):
         sos.bind(size=lambda *a: setattr(sos, "text_size", sos.size))
         center_block.add_widget(sos)
 
-        human_btn = BrandButton(text="HUMAN IDENTITY", bg_color=BLUE)
-        human_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "human_home"))
+        human_btn = LinkButton(text="HUMAN IDENTITY", url="https://github.com/Taru8899/SOS69069PQID", color=GREEN_BR, height=dp(28), halign="center")
         center_block.add_widget(human_btn)
 
         ver = Label(
@@ -419,7 +418,7 @@ class WalletScreen(Screen):
         links = [
             ("sos69069.com", "https://sos69069.com"),
             ("Token on Etherscan", "https://etherscan.io/token/0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A"),
-            ("SOS 69069 on GitHub", "https://github.com/Taru8899/69069"),
+            ("SOS 69069 APP on GitHub", "https://github.com/Taru8899/SOS69069APP"),
         ]
         for label, url in links:
             center_block.add_widget(LinkButton(
