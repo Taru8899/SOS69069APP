@@ -12,8 +12,8 @@ Coffee me 0x1c10e6574ee696f54b21a611a21313e4714628ad
 SOS 69069 APP, full version for 32 and 64 bit phones
 https://github.com/Taru8899/SOS69069APP/actions/runs/34344782220
 
-SOS 69069 APP, light version for 64 bit phones only
-https://github.com/Taru8899/SOS69069APP/actions/runs/34356465907
+SOS 69069 APP v 1.6.9.0.6.9, light version arm64-v8a
+https://github.com/Taru8899/SOS69069APP/blob/41fd3ef7b5ce527ce75082e37a23203888609aef/1.6.9.0.6.9-sos69069-1.6.9-arm64-v8a-debug.apk
 
 ## Overview
 
