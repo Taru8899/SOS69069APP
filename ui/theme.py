@@ -542,15 +542,15 @@ class NavBar(BoxLayout):
         self.spacing = dp(4)
         self.padding = [dp(2), 0]
         items = [
-            ("wallet", "ID", TEXT_MUTED),
-            ("check", "TRUTH", BLUE_SOFT),
             ("messages", "MSG", GREEN_BR),
+            ("check", "TRUTH", BLUE_SOFT),
             ("sign", "SIGN", GREEN_BR),
             ("gas", "GAS", ORANGE),
             ("presence", "PRES", YELLOW),
             ("batch", "BT", BLUE),
             ("ss", "S&S", get_color_from_hex("#a78bfa")),
             ("legacy", "LSF", get_color_from_hex("#c084fc")),
+            ("wallet", "ID", TEXT_MUTED),
         ]
         for name, label, color in items:
             btn = Button(

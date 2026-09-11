@@ -37,11 +37,6 @@ class LoadingScreen(Screen):
 
         block = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(14))
         block.bind(minimum_height=block.setter("height"))
-        logo_row = BoxLayout(size_hint_y=None, height=dp(128))
-        logo_row.add_widget(Label())
-        logo_row.add_widget(_logo_image(128))
-        logo_row.add_widget(Label())
-        block.add_widget(logo_row)
 
         for text, sz, col, h in (
             ("Loading ...", dp(18), TEXT, dp(30)),
@@ -389,7 +384,8 @@ class WalletScreen(Screen):
         sos.bind(size=lambda *a: setattr(sos, "text_size", sos.size))
         center_block.add_widget(sos)
 
-        human_btn = LinkButton(text="HUMAN IDENTITY", url="https://github.com/Taru8899/SOS69069PQID", color=GREEN_BR, height=dp(28), halign="center")
+        human_btn = BrandButton(text="HUMAN IDENTITY", bg_color=BLUE)
+        human_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "human_home"))
         center_block.add_widget(human_btn)
 
         ver = Label(
@@ -418,7 +414,7 @@ class WalletScreen(Screen):
         links = [
             ("sos69069.com", "https://sos69069.com"),
             ("Token on Etherscan", "https://etherscan.io/token/0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A"),
-            ("SOS 69069 APP on GitHub", "https://github.com/Taru8899/SOS69069APP"),
+            ("SOS 69069 on GitHub", "https://github.com/Taru8899/69069"),
         ]
         for label, url in links:
             center_block.add_widget(LinkButton(

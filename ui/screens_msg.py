@@ -84,17 +84,12 @@ class MessagesScreen(Screen):
             self.tab_trust.background_color = INPUT_BG
 
     def on_pre_enter(self, *a):
-        # Do not overwrite a pasted/edited address
-        if (self.addr_input.text or "").strip():
-            return
-        app = App.get_running_app()
-        if getattr(app, "last_check_address", None):
-            self.addr_input.text = app.last_check_address
-        elif app.private_key:
-            try:
-                self.addr_input.text = address_from_private_key(app.private_key)
-            except Exception:
-                pass
+        if not (self.addr_input.text or "").strip():
+            self.addr_input.text = CONTRACT_ADDRESS
+        self.direction = "trust"
+        self.tab_trust.background_color = BLUE
+        self.tab_push.background_color = INPUT_BG
+        self.load_messages()
 
     def use_mine(self, *_):
         app = App.get_running_app()
@@ -110,6 +105,9 @@ class MessagesScreen(Screen):
 
     def load_messages(self, *_):
         addr = self.addr_input.text.strip()
+        if not addr:
+            addr = CONTRACT_ADDRESS
+            self.addr_input.text = addr
         if not (addr.startswith("0x") and len(addr) == 42):
             show_popup("Error", "Enter a valid 0x address.")
             return
