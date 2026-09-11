@@ -1,4 +1,4 @@
-# SOS 69069 APP
+# SOS 69069
 SOS 69069 originates from verified Activity and Signatures.
 
 Whatever you do. SOS records. Whatever you do. Continue ...
@@ -7,14 +7,34 @@ What is the cost of your action right now?
 
 Coffee me 0x1c10e6574ee696f54b21a611a21313e4714628ad
 
-69069 — it’s a Ledger of Presence with no Assets to hold and no Wallet to drain. Presence written Permanently into the block History, carried Forward by activity, and made Provable through its x2 Legacy Continuity System. An Identityless Record Field. 0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A
+69069 — it’s a Ledger of Presence with no Assets to hold and no Wallet to drain. Presence written Permanently into the block History, carried Forward by activity, and made Provable through its x2 Legacy Continuity System. An Identityless Record Field.
 
-SOS 69069 APP v 1.6.9.0.6.9,all files ZIP
-https://github.com/Taru8899/SOS69069APP/blob/2861eb9cd963bc3ffe7082b8e39fc517e6504634/1.6.9.0.6.9-SOS69069APP.zip
+0x7373DBC24Dcd785896E8Ac3d5372c6ced9B75a8A
 
-SOS 69069 APP v 1.6.9.0.6.9, light version arm64-v8a
-https://github.com/Taru8899/SOS69069APP/blob/41fd3ef7b5ce527ce75082e37a23203888609aef/1.6.9.0.6.9-sos69069-1.6.9-arm64-v8a-debug.apk
+1.
+SOS 69069html ZIP
+https://github.com/Taru8899/69069/blob/main/1.6.9.0.6.9-%20html69069.zip
 
+
+2.
+SOS 69069 APP v 1.6.9.0.6.9 light version arm64-v8a
+https://github.com/Taru8899/69069/blob/main/1.6.9.0.6.9-APP-sos69069-1.6.9-arm64-v8a-debug.apk
+
+
+SOS 69069 APP v 1.6.9.0.6.9 ZIP 
+https://github.com/Taru8899/69069/blob/main/1.6.9.0.6.9-APP-SOS69069APP.zip
+
+........................................................
+3.
+SOS 69069 PQID v 1.6.9.0.6.9
+https://github.com/Taru8899/69069/blob/main/1.6.9.0.6.9-PQID-sos69069pqid-1.6.9-arm64-v8a-debug.apk
+
+
+SOS 69069 PQID v 1.6.9.0.6.9 ZIP
+https://github.com/Taru8899/69069/blob/main/1.6.9.0.6.9-PQID-SOS69069PQID.zip
+
+
+SOS 69069 
 https://drive.google.com/drive/folders/1I9rpQFzpw14FKYM-rQCE-DCB7RQlEvyY
 
 ## Overview
